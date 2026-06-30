@@ -33,14 +33,20 @@ Pipeline
 --------
 1. grayscale + bilateral filter (edge-preserving denoise)
 2. myelin mask = darkest pixels (percentile threshold); remove speckle
-3. fiber region = myelin closed enough to seal broken rings, then hole-filled;
-   isolates each axon's bright body from background even when the ring is broken
-4. axon bodies = bright bodies inside fibers passing area / solidity / brightness
-5. myelin = dark band touching the axon within a thickness cap; shared band split
-   by nearest axon
+3. seal broken rings (morphological close) and frame the image border, so axon
+   compartments -- including ones cropped by the image edge -- are isolated from
+   the background by the surrounding myelin
+4. axon bodies = compartments passing area / convex-hull solidity / brightness
+   (solidity rejects non-axon corner pockets, which are far less convex)
+5. myelin = dark band touching the axon within a thickness cap; a band shared by
+   touching axons is split by nearest axon
 6. smooth the axon body and the (axon | myelin) region into roughly-closed shapes
+   (smoothing kernel capped so large axons are not distorted)
 7. bubbles = significant bright holes in the smoothed annulus -> excluded
 8. g per axon from the area formula above
+
+Note: steps 2-4 currently assume myelin is darker than the axoplasm (true for
+these TEM samples). Inverted-contrast (e.g. SEM) data needs a polarity step.
 """
 from __future__ import annotations
 import cv2
@@ -56,11 +62,12 @@ DEFAULTS = dict(
     myelin_close=11,          # close thin inter-lamellar gaps (keeps large gaps open)
     min_axon_frac=0.004,      # min axon-body area as a fraction of the image
     max_axon_frac=0.60,       # max axon-body area as a fraction of the image
-    min_solidity=0.75,        # reject leaky / wrap-around bodies (convex-hull based)
+    min_solidity=0.85,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=0,          # axon-body mean intensity must exceed median(image)+margin
     touch_dilate=5,           # myelin must touch the axon within this many px
     myelin_band=0.55,         # myelin thickness cap as a fraction of axon radius
-    smooth_frac=0.33,         # border smoothing kernel as a fraction of axon radius
+    smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
+    smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
 )
@@ -109,33 +116,46 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     myel = keep[lab].astype(np.uint8)
 
     kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['close_fiber'],) * 2)
-    fiber = binary_fill_holes(cv2.morphologyEx(myel, cv2.MORPH_CLOSE, kf).astype(bool))
+    mc = cv2.morphologyEx(myel, cv2.MORPH_CLOSE, kf)          # sealed myelin: separates axons (incl. broken central ring)
+    # treat the image border as a wall, so edge-cropped axons get enclosed too
+    framed = mc.copy()
+    framed[0, :] = framed[-1, :] = framed[:, 0] = framed[:, -1] = 1
+    enclosed = binary_fill_holes(framed.astype(bool))
     km = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['myelin_close'],) * 2)
-    myelin_mat = (cv2.morphologyEx(myel, cv2.MORPH_CLOSE, km) > 0) & fiber
-    bright = fiber & ~myelin_mat
+    myelin_mat = cv2.morphologyEx(myel, cv2.MORPH_CLOSE, km) > 0
 
+    # candidate axon compartments = regions separated by the sealed myelin
+    sep = enclosed & ~mc.astype(bool)
     minA, maxA = P['min_axon_frac'] * H * W, P['max_axon_frac'] * H * W
     bright_thr = np.median(gf) + P['bright_margin']
-    blab, nb = cc_label(bright)
+    slab, ns = cc_label(sep)
     axon_lbl = np.zeros((H, W), np.int32)
     cands = []
     aid = 1
-    for c in range(1, nb + 1):
-        comp = blab == c
-        A = int(comp.sum())
+    for c in range(1, ns + 1):
+        seed = slab == c
+        if seed.sum() < minA * 0.4:               # eroded seed; relaxed floor
+            continue
+        # grow the eroded seed out to the fine myelin boundary, but keep it within
+        # the seed's neighbourhood so a broken ring can't flood the background
+        terr = cv2.dilate(seed.astype(np.uint8), kf) > 0
+        glab, _ = cc_label((~myelin_mat) & terr)
+        cy0, cx0 = np.argwhere(seed).mean(0)
+        sid = glab[int(round(cy0)), int(round(cx0))]
+        body = binary_fill_holes(glab == sid) if sid > 0 else binary_fill_holes(seed)
+        A = int(body.sum())
         if not (minA <= A <= maxA):
             continue
-        cnt = max(cv2.findContours(comp.astype(np.uint8), cv2.RETR_EXTERNAL,
+        cnt = max(cv2.findContours(body.astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)[0], key=cv2.contourArea)
         hull = cv2.contourArea(cv2.convexHull(cnt))
         sol = A / hull if hull > 0 else 0.0
-        if sol < P['min_solidity'] or gf[comp].mean() < bright_thr:
+        if sol < P['min_solidity'] or gf[body].mean() < bright_thr:
             continue
-        comp = binary_fill_holes(comp)          # absorb intra-axonal granules
-        axon_lbl[comp] = aid
-        ys, xs = np.where(comp)
-        cands.append(dict(id=aid, body=comp, cx=float(xs.mean()), cy=float(ys.mean()),
-                          r=float(np.sqrt(comp.sum() / np.pi)), solidity=float(sol)))
+        ys, xs = np.where(body)
+        cy, cx, rr = float(ys.mean()), float(xs.mean()), float(np.sqrt(A / np.pi))
+        axon_lbl[body] = aid
+        cands.append(dict(id=aid, body=body, cx=cx, cy=cy, r=rr, solidity=float(sol)))
         aid += 1
 
     blank = np.zeros((H, W), np.int32)
@@ -165,7 +185,7 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     axons = []
     for a in cands:
         terr = (nearest == a['id']) | (nearest == 0)   # Voronoi territory (split touching fibers)
-        k = a['r'] * P['smooth_frac']
+        k = min(a['r'] * P['smooth_frac'], P['smooth_max_px'])
         fm = _smooth(binary_fill_holes(a['body'] | (assigned == a['id'])) & terr, k)
         am = _smooth(a['body'] & terr, k) & fm
         annulus = fm & ~am
