@@ -96,6 +96,14 @@ From the Methods (page 3). Pipeline per image, in order:
 Stack: OpenCV (vision) + PyQt5 (GUI) + fbs (packaging). Calibration entered as
 **`um/px`** (GUI example value: `0.003951 um/px`; example threshold `122`).
 
+### Source EM acquisition (context only — not needed for our algorithm)
+TEM (not SEM), so **myelin is dark** on a light background. Tissue: mouse CNS
+(corpus callosum, optic nerve) and PNS (sciatic nerve), aldehyde-fixed, osmium +
+uranyl/lead stained. **Ultrathin sections ~60 nm**, imaged on a **JEOL 1200EX**
+TEM with a **2k CCD** camera. (Implication for us: our TEM samples share this
+dark-myelin convention; SEM datasets like AxonDeepSeg are inverted — bright
+myelin — and need a polarity step.)
+
 ### Recommended user workflow (Fig. 1H)
 1. Enter calibration factor (um/px).
 2. Set a threshold and mark **all axons**.
@@ -217,3 +225,22 @@ Open nuance to keep in mind (decide when implementing):
   contours and g-ratio = d/D.
 - `myeltracer_fig1_full.png` — full Fig. 1 page (also shows GUI, workflow steps,
   and myelin-fold handling M–P).
+
+---
+
+## Completeness check (so the PDF is never needed again)
+
+These notes capture **everything from the paper that matters for building our
+tool**: the g-ratio definition + formula, the exact OpenCV pipeline and all
+parameters, the equivalent-circle-diameter trick, calibration, the semi-
+automated workflow, hard-case handling, sanity-check g-ratio values per tissue,
+related tools, and the EM acquisition convention. Cross-checked against the full
+extracted text of all 9 pages.
+
+Intentionally **omitted** (verified not algorithmically relevant): the wet-lab
+EM sample-preparation protocol (fixation/staining chemistry, embedding), the
+per-experiment statistics (exact ANCOVA/t-test p-values, slopes, intercepts,
+animal counts beyond the sanity table), grant/author/acknowledgement text, and
+the reference list (key tools already summarised above). The PDF
+(`ENEURO.0558-20.2021`) is **not required** for any future work on this project;
+the upload path is session-specific and will not persist anyway.
