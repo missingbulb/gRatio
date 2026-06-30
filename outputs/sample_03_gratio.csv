@@ -1,0 +1,4 @@
+axon_id,g_ratio,axon_area_px,myelin_area_px,centroid_x,centroid_y,equiv_radius_px,solidity
+1,0.7742,29548,19746,110.5,154.3,97.0,0.960
+2,0.8289,28124,12811,416.8,340.5,94.6,0.975
+3,0.7510,21053,16272,215.8,365.7,81.9,0.974
