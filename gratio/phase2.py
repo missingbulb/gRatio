@@ -6,7 +6,8 @@ touching-cell boundary decision. Output: inner (axon) border + outer (myelin)
 border per axon, numbered."""
 import cv2, numpy as np, sys; sys.path.insert(0,'.')
 import canon, phase1_select as ps
-from scipy.ndimage import distance_transform_edt, label as cc_label, binary_fill_holes
+from scipy.ndimage import (distance_transform_edt, label as cc_label,
+                           binary_fill_holes, binary_propagation)
 
 PAL=canon.PAL
 
@@ -22,33 +23,25 @@ def get_axons(n):
         axons.append(dict(num=i,axon=m))
     return g,gf,axons
 
-def add_myelin(g,gf,axons, myel_pct=23, speckle=40, myel_close=11, touch=5, band=0.8):
+def add_myelin(g,gf,axons, myel_pct=25, speckle=40, myel_close=11):
     H,W=g.shape
     T=np.percentile(gf,myel_pct); myel=(gf<T).astype(np.uint8)
     nn,lab,st,_=cv2.connectedComponentsWithStats(myel,8); keep=np.zeros(nn,bool)
     keep[1:]=st[1:,cv2.CC_STAT_AREA]>=speckle; myel=keep[lab].astype(np.uint8)
     km=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(myel_close,)*2)
-    mm=cv2.morphologyEx(myel,cv2.MORPH_CLOSE,km)>0
+    mm=cv2.morphologyEx(myel,cv2.MORPH_CLOSE,km)>0    # dark myelin band (inter-lamellar bridged)
     axon_lbl=np.zeros((H,W),np.int32)
     for a in axons: axon_lbl[a['axon']]=a['num']
-    # myelin connected (touching) to an axon, split by nearest axon, capped thickness
-    kd=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(touch,)*2)
-    seed=cv2.dilate((axon_lbl>0).astype(np.uint8),kd)>0
-    myl_lab,_=cc_label(mm); tl=np.unique(myl_lab[seed&mm]); tl=tl[tl>0]
-    myelin_keep=np.isin(myl_lab,tl)
-    dist,(iy,ix)=distance_transform_edt(axon_lbl==0,return_indices=True); nearest=axon_lbl[iy,ix]
-    rarr=np.zeros(max(a['num'] for a in axons)+1)
-    for a in axons: rarr[a['num']]=np.sqrt(a['axon'].sum()/np.pi)
-    cap=band*rarr[nearest]
-    assigned=np.where(myelin_keep&(nearest>0)&(dist<=cap),nearest,0)
-    kc=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(17,17))
+    # Voronoi split of the field between axons (the touching-cell boundary)
+    _,(iy,ix)=distance_transform_edt(axon_lbl==0,return_indices=True); nearest=axon_lbl[iy,ix]
+    kc=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(15,15))
     for a in axons:
-        am=(assigned==a['num'])
-        # enclose the (possibly patchy) myelin into a smooth fiber, then clip to
-        # this axon's Voronoi territory so touching neighbours split cleanly
-        fiber=binary_fill_holes(a['axon']|am)
-        fiber=binary_fill_holes(cv2.morphologyEx(fiber.astype(np.uint8),cv2.MORPH_CLOSE,kc).astype(bool))
-        fiber=fiber & ((nearest==a['num'])|(axon_lbl==a['num']))
+        terr=(nearest==a['num'])|(axon_lbl==a['num'])
+        # grow through the connected dark band from the axon until it meets bright
+        # (extracellular); the dark->bright transition sets the myelin outer edge
+        region=((mm|a['axon']) & terr)
+        fiber=binary_propagation(a['axon'], mask=region)
+        fiber=binary_fill_holes(cv2.morphologyEx(fiber.astype(np.uint8),cv2.MORPH_CLOSE,kc).astype(bool)) & terr
         a['outer']=fiber
         a['outer_poly']=ps.smooth_edge_aware(fiber.astype(np.uint8),H,W,frac=0.04)
         cs,_=cv2.findContours(a['axon'].astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
