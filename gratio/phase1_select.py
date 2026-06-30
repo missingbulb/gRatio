@@ -11,37 +11,39 @@ SEL = {1:[2,9,11,12], 2:[7], 3:[3,4,6,8,10]}
 
 from scipy.ndimage import gaussian_filter1d
 
-def smooth_edge_aware(mask, H, W, frac=0.05, tol=2):
-    """Low-pass the contour, but hold points on the image border fixed so a
-    cropped axon's border stays straight along the image edge."""
-    cs,_=cv2.findContours(mask.astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
-    if not cs: return None
-    c=max(cs,key=cv2.contourArea).reshape(-1,2).astype(np.float64)
-    if len(c)<12: return c.astype(np.int32)
-    s=max(2.0,frac*len(c))
-    sx=gaussian_filter1d(c[:,0],s,mode='wrap'); sy=gaussian_filter1d(c[:,1],s,mode='wrap')
-    on_edge=(c[:,0]<=tol)|(c[:,0]>=W-1-tol)|(c[:,1]<=tol)|(c[:,1]>=H-1-tol)
-    sx[on_edge]=c[on_edge,0]; sy[on_edge]=c[on_edge,1]      # keep image-edge points put
-    return np.stack([sx,sy],1).astype(np.int32)
-
-def refine(gf, mask, dilate_px=5):
+def smooth_clip(mask, frac=0.04, pad=48):
+    """Smooth the boundary WITHOUT the image frame creating artifacts: replicate
+    the mask outward into a padding (so a cropped axon extends past the frame and
+    the frame is not a contour edge), smooth, then crop back to the frame. Where
+    the axon is cut by the image the border becomes the straight crop line; no
+    spikes/notches."""
     H,W=mask.shape
+    padded=cv2.copyMakeBorder(mask.astype(np.uint8),pad,pad,pad,pad,cv2.BORDER_REPLICATE)
+    cs,_=cv2.findContours(padded,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+    if not cs: return mask, None
+    c=max(cs,key=cv2.contourArea).reshape(-1,2).astype(np.float64)
+    if len(c)>=12:
+        s=max(2.0,frac*len(c))
+        c[:,0]=gaussian_filter1d(c[:,0],s,mode='wrap'); c[:,1]=gaussian_filter1d(c[:,1],s,mode='wrap')
+    canvas=np.zeros_like(padded); cv2.fillPoly(canvas,[c.astype(np.int32)],1)
+    cropped=canvas[pad:pad+H,pad:pad+W]>0
+    cs2,_=cv2.findContours(cropped.astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    poly=max(cs2,key=cv2.contourArea) if cs2 else None
+    return cropped, poly
+
+def refine(gf, mask, lam2=0.96):
     img=gaussian(gf.astype(np.float64)/255.0, sigma=2)
-    ls=MCV(img, num_iter=40, init_level_set=mask.astype(np.uint8), smoothing=3,
-           lambda1=1.0, lambda2=1.1)
+    # lam2<1 lets the contour expand a touch toward the true axoplasm edge (sensitivity)
+    ls=MCV(img, num_iter=45, init_level_set=mask.astype(np.uint8), smoothing=2,
+           lambda1=1.0, lambda2=lam2)
     lab,_=cc_label(ls); ys,xs=np.where(mask); cy,cx=int(ys.mean()),int(xs.mean())
     if 0<=cy<lab.shape[0] and 0<=cx<lab.shape[1] and lab[cy,cx]>0:
         ls=(lab==lab[cy,cx])
     else:
         ls=mask
     ls=binary_fill_holes(ls)
-    if dilate_px>0:                                          # masks were a touch shy -> grow a bit
-        k=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*dilate_px+1,)*2)
-        ls=cv2.dilate(ls.astype(np.uint8),k)>0
-    poly=smooth_edge_aware(ls, H, W, frac=0.05)
-    out=np.zeros_like(mask,np.uint8)
-    if poly is not None: cv2.fillPoly(out,[poly],1)
-    return out>0, poly
+    out,poly=smooth_clip(ls, frac=0.04)
+    return out, poly
 
 PAL=canon.PAL
 def run(n):
