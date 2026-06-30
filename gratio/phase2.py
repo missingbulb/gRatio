@@ -7,9 +7,24 @@ border per axon, numbered."""
 import cv2, numpy as np, sys; sys.path.insert(0,'.')
 import canon, phase1_select as ps
 from scipy.ndimage import (distance_transform_edt, label as cc_label,
-                           binary_fill_holes, binary_propagation)
+                           binary_fill_holes, binary_propagation, gaussian_filter1d)
 
 PAL=canon.PAL
+
+def smooth_clip(mask, frac=0.04, pad=48):
+    """Smooth a mask boundary; image-edge segments stay straight (no spikes)."""
+    H,W=mask.shape
+    padded=cv2.copyMakeBorder(mask.astype(np.uint8),pad,pad,pad,pad,cv2.BORDER_REPLICATE)
+    cs,_=cv2.findContours(padded,cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+    if not cs: return mask, None
+    c=max(cs,key=cv2.contourArea).reshape(-1,2).astype(np.float64)
+    if len(c)>=12:
+        s=max(2.0,frac*len(c))
+        c[:,0]=gaussian_filter1d(c[:,0],s,mode='wrap'); c[:,1]=gaussian_filter1d(c[:,1],s,mode='wrap')
+    canvas=np.zeros_like(padded); cv2.fillPoly(canvas,[c.astype(np.int32)],1)
+    cropped=canvas[pad:pad+H,pad:pad+W]>0
+    cs2,_=cv2.findContours(cropped.astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
+    return cropped, (max(cs2,key=cv2.contourArea) if cs2 else None)
 
 def get_axons(n):
     g=cv2.cvtColor(cv2.imread(f'/home/user/gRatio/data/samples/sample_0{n}.png'),cv2.COLOR_BGR2GRAY)
@@ -23,7 +38,7 @@ def get_axons(n):
         axons.append(dict(num=i,axon=m))
     return g,gf,axons
 
-def add_myelin(g,gf,axons, myel_pct=25, speckle=40, myel_close=11):
+def add_myelin(g,gf,axons, myel_pct=18, speckle=40, myel_close=11):
     H,W=g.shape
     T=np.percentile(gf,myel_pct); myel=(gf<T).astype(np.uint8)
     nn,lab,st,_=cv2.connectedComponentsWithStats(myel,8); keep=np.zeros(nn,bool)
@@ -35,15 +50,19 @@ def add_myelin(g,gf,axons, myel_pct=25, speckle=40, myel_close=11):
     # Voronoi split of the field between axons (the touching-cell boundary)
     _,(iy,ix)=distance_transform_edt(axon_lbl==0,return_indices=True); nearest=axon_lbl[iy,ix]
     kc=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(15,15))
+    G=13  # bridge the bright periaxonal gap so the grow can reach the myelin ring
+    kg=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*G+1,)*2)
     for a in axons:
         terr=(nearest==a['num'])|(axon_lbl==a['num'])
-        # grow through the connected dark band from the axon until it meets bright
-        # (extracellular); the dark->bright transition sets the myelin outer edge
-        region=((mm|a['axon']) & terr)
-        fiber=binary_propagation(a['axon'], mask=region)
+        seed=(cv2.dilate(a['axon'].astype(np.uint8),kg)>0)&terr
+        # grow through the connected dark band (from the bridged seed) until it
+        # meets bright extracellular; that dark->bright transition is the outer edge.
+        region=((mm|seed) & terr)
+        fiber=binary_propagation(seed, mask=region)
+        # solid thick layer (holes are Phase 3): close + fill, clip to own territory
         fiber=binary_fill_holes(cv2.morphologyEx(fiber.astype(np.uint8),cv2.MORPH_CLOSE,kc).astype(bool)) & terr
-        a['outer']=fiber
-        a['outer_poly']=ps.smooth_edge_aware(fiber.astype(np.uint8),H,W,frac=0.04)
+        fiber=fiber | a['axon']
+        a['outer'],a['outer_poly']=smooth_clip(fiber, frac=0.04)   # clean (no edge spikes)
         cs,_=cv2.findContours(a['axon'].astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_SIMPLE)
         a['axon_poly']=max(cs,key=cv2.contourArea) if cs else None
     return axons
