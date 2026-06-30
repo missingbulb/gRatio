@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """CLI: compute area-based g-ratios for EM cross-section images.
 
-For each input image, writes a coloured overlay PNG (axon interior, myelin, and
-the per-axon g-ratio drawn at the axon centroid) and a CSV of per-axon results.
+For each input image, writes a side-by-side [original | overlay] PNG (each
+axon+myelin pair in its own colour, with axon and myelin borders, bubbles
+outlined, and the per-axon g-ratio drawn at the axon centroid) and a CSV of
+per-axon results.
 
 Usage:
     python analyze.py data/samples/*.png -o outputs/
     python analyze.py img.png -o outputs/ --myelin-percentile 25
+    python analyze.py img.png -o outputs/ --overlay-only
 """
 import argparse
 import csv
 import os
 import cv2
 
-from gratio import segment, render, DEFAULTS
+from gratio import segment, render, render_comparison, DEFAULTS
 
 
 def main():
@@ -21,6 +24,8 @@ def main():
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("images", nargs="+", help="input image path(s)")
     ap.add_argument("-o", "--outdir", default="outputs", help="output directory")
+    ap.add_argument("--overlay-only", action="store_true",
+                    help="write just the overlay instead of the side-by-side comparison")
     # expose the numeric tunables
     for key, val in DEFAULTS.items():
         if isinstance(val, (int, float)):
@@ -42,7 +47,7 @@ def main():
             continue
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         seg = segment(gray, **overrides)
-        out = render(gray, seg)
+        out = render(gray, seg) if args.overlay_only else render_comparison(gray, seg)
 
         stem = os.path.splitext(os.path.basename(path))[0]
         overlay_path = os.path.join(args.outdir, f"{stem}_gratio.png")

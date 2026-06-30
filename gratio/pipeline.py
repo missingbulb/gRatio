@@ -5,9 +5,9 @@ Motivation
 The classical g-ratio (inner axon diameter / outer fiber diameter) is measured
 along a chosen diameter, so it is sensitive to which cross-section / direction
 is used and is skewed when myelin does not hermetically enclose the axon. This
-module instead works from **areas**, which are rotation- and direction-
-independent, and measures the **actual myelin material** present so that
-malformed / non-hermetic myelin correctly reduces the apparent sheath:
+module works from **areas**, which are direction-independent, and measures the
+**actual myelin material** present so that malformed / non-hermetic myelin
+correctly reduces the apparent sheath:
 
     g = sqrt( A_axon / (A_axon + A_myelin) )          # textbook, value < 1
 
@@ -16,169 +16,219 @@ diameter-ratio g exactly (sqrt of the area ratio == the radius ratio), so it is
 in parity with the standard metric; it diverges only when the myelin is
 malformed -- which is the intent. See docs/reference/myeltracer_notes.md.
 
+Structural model (each fiber is a set of contiguous bodies, not loose pixels)
+----------------------------------------------------------------------------
+* axon   -- a contiguous bright body (the axoplasm), holes filled.
+* myelin -- a contiguous dark band that touches the axon, of bounded thickness;
+            it has an outer border and an inner border (= the axon border).
+* bubble -- a bright pocket fully enclosed by the sheath, i.e. a hole in the
+            myelin. Bubbles are NOT myelin: they are excluded from A_myelin and
+            highlighted, because they are exactly the malformation of interest.
+
 Pipeline
 --------
 1. grayscale + bilateral filter (edge-preserving denoise)
 2. myelin mask = darkest pixels (percentile threshold); remove speckle
-3. fiber detection: close lamellar gaps -> fill holes -> lumens = filled holes
-4. keep lumens by area / convex-hull solidity / brightness (axoplasm is bright)
-5. per-axon myelin = actual dark pixels in that fiber's sheath, with thin
-   inter-lamellar gaps closed (large malformation gaps left open), split
-   between touching fibers by nearest lumen
-6. g per axon from the area formula above
-
-Known limitation
-----------------
-Lumen detection relies on the myelin ring being closed enough to enclose a
-hole. Severely broken / malformed rings (e.g. the central axon in sample_01)
-let the lumen leak into the background and are not yet detected; handling those
-is the next iteration (axon-first detection / interactive seeding / ML).
+3. fiber region = myelin closed enough to seal broken rings, then hole-filled;
+   this isolates each axon's bright body from the background even when the
+   surrounding ring is incomplete (the malformed case)
+4. axon bodies = bright bodies inside fibers passing area / solidity /
+   brightness; intra-axonal granules are filled in
+5. myelin = dark band contiguous with an axon (touching it) within a thickness
+   cap; a band shared by touching fibers is split by nearest axon
+6. bubbles = enclosed holes in (axon u myelin); excluded from myelin
+7. g per axon from the area formula above
 """
 from __future__ import annotations
 import cv2
 import numpy as np
 from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc_label
 
-# Default parameters. Override per call via analyze_image(..., **overrides).
+# Default parameters. Override per call via segment(..., **overrides).
 DEFAULTS = dict(
-    bilateral=(9, 75, 75),   # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
-    myelin_percentile=23,    # darkest X% of pixels treated as myelin material
-    speckle_min=40,          # drop myelin connected components smaller than this (px)
-    close_ksize=9,           # morphological close to bridge lamellae for fiber detection
-    lumen_open=3,            # smooth lumen boundary / drop pinholes
-    min_axon_frac=0.004,     # min lumen area as a fraction of the image
-    max_axon_frac=0.45,      # max lumen area as a fraction of the image
-    min_solidity=0.70,       # reject leaky / wrap-around lumens (convex-hull based)
-    bright_margin=0,         # lumen mean intensity must exceed median(image) + margin
-    myelin_fill=11,          # close thin inter-lamellar gaps (keeps large gaps open)
-    myelin_band=0.8,         # cap myelin assignment to band * lumen_radius from lumen
+    bilateral=(9, 75, 75),    # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
+    myelin_percentile=23,     # darkest X% of pixels treated as myelin material
+    speckle_min=40,           # drop myelin connected components smaller than this (px)
+    close_fiber=27,           # seal broken rings to isolate axon bodies (fiber detection)
+    myelin_close=11,          # close thin inter-lamellar gaps (keeps large gaps open)
+    min_axon_frac=0.004,      # min axon-body area as a fraction of the image
+    max_axon_frac=0.60,       # max axon-body area as a fraction of the image
+    min_solidity=0.75,        # reject leaky / wrap-around bodies (convex-hull based)
+    bright_margin=0,          # axon-body mean intensity must exceed median(image)+margin
+    touch_dilate=5,           # myelin must touch the axon within this many px
+    myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius
 )
 
-# Overlay colours (BGR).
-AXON_COLOR = (200, 230, 0)    # cyan
-MYELIN_COLOR = (40, 40, 230)  # red
+# Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
+PALETTE = [
+    (0, 200, 255),    # amber
+    (235, 180, 0),    # blue
+    (0, 220, 100),    # green
+    (255, 90, 200),   # magenta
+    (60, 170, 255),   # orange
+    (200, 130, 255),  # pink
+    (255, 200, 60),   # cyan-blue
+    (120, 220, 0),    # teal-green
+]
+
+
+def _palette(i):
+    return PALETTE[i % len(PALETTE)]
 
 
 def segment(gray: np.ndarray, **overrides) -> dict:
-    """Segment axons + myelin and compute the area-based g-ratio per axon.
+    """Segment axon bodies + myelin bands and compute the area-based g-ratio.
 
-    Parameters
-    ----------
-    gray : 2-D uint8 grayscale image.
-    **overrides : any key in DEFAULTS.
-
-    Returns a dict with keys: ``axons`` (list of per-axon dicts with id, area,
-    myelin_area, g, centroid cx/cy, equivalent radius r, solidity), plus the
-    intermediate masks (``gf``, ``T``, ``myelin``, ``lumen_label``, ``assigned``).
+    Returns a dict with ``axons`` (list of per-axon dicts: id, area,
+    myelin_area, g, centroid cx/cy, equivalent radius r, solidity) and the label
+    images ``axon_lbl`` (int, per-axon), ``assigned`` (int, myelin per-axon), and
+    ``bubble`` (bool, excluded holes).
     """
     P = {**DEFAULTS, **overrides}
     if gray.ndim != 2:
         gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+    H, W = gray.shape
 
     gf = cv2.bilateralFilter(gray, *P['bilateral'])
     T = float(np.percentile(gf, P['myelin_percentile']))
-    myelin_raw = (gf < T).astype(np.uint8)
+    myel = (gf < T).astype(np.uint8)
 
     # remove speckle (small connected components)
-    n, lab, stats, _ = cv2.connectedComponentsWithStats(myelin_raw, 8)
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(myel, 8)
     keep = np.zeros(n, bool)
     keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= P['speckle_min']
-    myelin = keep[lab].astype(np.uint8)
+    myel = keep[lab].astype(np.uint8)
 
-    # close lamellar gaps -> fill holes -> fiber solids; the holes are lumens
-    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['close_ksize'],) * 2)
-    myelin_closed = cv2.morphologyEx(myelin, cv2.MORPH_CLOSE, k)
-    fiber_solid = binary_fill_holes(myelin_closed.astype(bool))
-    lumen = (fiber_solid & ~myelin_closed.astype(bool)).astype(np.uint8)
-    if P['lumen_open'] > 1:
-        ko = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['lumen_open'],) * 2)
-        lumen = cv2.morphologyEx(lumen, cv2.MORPH_OPEN, ko)
-    # absorb intra-axonal dark granules (interior holes) into the axon
-    lumen = binary_fill_holes(lumen.astype(bool)).astype(np.uint8)
-    fiber_lab, _ = cc_label(fiber_solid)
+    # fiber region: seal broken rings, then fill -> isolates bright axon bodies
+    kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['close_fiber'],) * 2)
+    fiber = binary_fill_holes(cv2.morphologyEx(myel, cv2.MORPH_CLOSE, kf).astype(bool))
+    # myelin material: gentle inter-lamellar closing only
+    km = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['myelin_close'],) * 2)
+    myelin_mat = (cv2.morphologyEx(myel, cv2.MORPH_CLOSE, km) > 0) & fiber
+    bright_inside = fiber & ~myelin_mat
 
-    H, W = gray.shape
     minA, maxA = P['min_axon_frac'] * H * W, P['max_axon_frac'] * H * W
     bright_thr = np.median(gf) + P['bright_margin']
-    lab_l, nl = cc_label(lumen)
-    lumen_keep = np.zeros_like(lab_l)
+    blab, nb = cc_label(bright_inside)
+    axon_lbl = np.zeros((H, W), np.int32)
     axons = []
-    next_id = 1
-    for i in range(1, nl + 1):
-        comp = lab_l == i
+    aid = 1
+    for c in range(1, nb + 1):
+        comp = blab == c
         A = int(comp.sum())
-        if A < minA or A > maxA:
+        if not (minA <= A <= maxA):
             continue
         cnts, _ = cv2.findContours(comp.astype(np.uint8), cv2.RETR_EXTERNAL,
                                    cv2.CHAIN_APPROX_SIMPLE)
-        c = max(cnts, key=cv2.contourArea)
-        hullA = cv2.contourArea(cv2.convexHull(c))
-        solidity = A / hullA if hullA > 0 else 0.0
-        if solidity < P['min_solidity']:
+        cc = max(cnts, key=cv2.contourArea)
+        hullA = cv2.contourArea(cv2.convexHull(cc))
+        sol = A / hullA if hullA > 0 else 0.0
+        if sol < P['min_solidity'] or gf[comp].mean() < bright_thr:
             continue
-        if gf[comp].mean() < bright_thr:   # axoplasm is brighter than background
-            continue
-        lumen_keep[comp] = next_id
+        comp = binary_fill_holes(comp)          # absorb intra-axonal granules
+        axon_lbl[comp] = aid
         ys, xs = np.where(comp)
-        cy, cx = float(ys.mean()), float(xs.mean())
-        fid = int(fiber_lab[int(round(cy)), int(round(cx))])
-        axons.append(dict(id=next_id, area=A, cx=cx, cy=cy,
-                          r=float(np.sqrt(A / np.pi)), solidity=float(solidity),
-                          fid=fid))
-        next_id += 1
+        axons.append(dict(id=aid, area=int(comp.sum()), cx=float(xs.mean()),
+                          cy=float(ys.mean()), r=float(np.sqrt(comp.sum() / np.pi)),
+                          solidity=float(sol)))
+        aid += 1
 
-    # Myelin = actual dark pixels in each kept fiber's sheath. Restricting to the
-    # lumen's own fiber component excludes far debris; thin inter-lamellar gaps
-    # are closed (large malformation gaps stay open); nearest-lumen splits a
-    # sheath shared by touching fibers.
+    assigned = np.zeros((H, W), np.int32)
+    bubble = np.zeros((H, W), bool)
     if axons:
-        keep_fibers = {a['fid'] for a in axons if a['fid'] > 0}
-        sheath = np.isin(fiber_lab, list(keep_fibers)) & (lumen_keep == 0)
-        myelin_actual = (myelin > 0) & sheath
-        if P['myelin_fill'] > 1:
-            kf = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['myelin_fill'],) * 2)
-            closed = cv2.morphologyEx(myelin_actual.astype(np.uint8), cv2.MORPH_CLOSE, kf)
-            myelin_actual = (closed > 0) & sheath
+        # myelin band = dark material touching an axon, within a thickness cap
+        kd = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['touch_dilate'],) * 2)
+        seed = cv2.dilate((axon_lbl > 0).astype(np.uint8), kd) > 0
+        myl_lab, _ = cc_label(myelin_mat)
+        touch = np.unique(myl_lab[seed & myelin_mat])
+        touch = touch[touch > 0]
+        myelin_keep = np.isin(myl_lab, touch)
 
-        dist, (iy, ix) = distance_transform_edt(lumen_keep == 0, return_indices=True)
-        nearest = lumen_keep[iy, ix]
-        r_by_id = np.zeros(next_id)
+        dist, (iy, ix) = distance_transform_edt(axon_lbl == 0, return_indices=True)
+        nearest = axon_lbl[iy, ix]
+        r_by_id = np.zeros(len(axons) + 1)
         for a in axons:
             r_by_id[a['id']] = a['r']
         cap = P['myelin_band'] * r_by_id[nearest]
-        assigned = np.where(myelin_actual & (dist <= cap) & (nearest > 0), nearest, 0)
+        assigned = np.where(myelin_keep & (nearest > 0) & (dist <= cap), nearest, 0)
+
+        # bubbles = enclosed holes in (axon u myelin) -> excluded from myelin
+        region = (axon_lbl > 0) | (assigned > 0)
+        bubble = binary_fill_holes(region) & ~region
+
         for a in axons:
             a['myelin_area'] = int((assigned == a['id']).sum())
             tot = a['area'] + a['myelin_area']
             a['g'] = float(np.sqrt(a['area'] / tot)) if tot > 0 else float('nan')
-    else:
-        assigned = np.zeros_like(lumen_keep)
 
-    return dict(gf=gf, T=T, myelin=myelin, lumen_label=lumen_keep,
-                assigned=assigned, axons=axons)
+    return dict(gf=gf, T=T, axon_lbl=axon_lbl, assigned=assigned,
+                bubble=bubble, axons=axons)
+
+
+def _axon_region(seg, axon_id):
+    """Filled outer region of one fiber (axon + its myelin + enclosed bubbles)."""
+    reg = (seg['axon_lbl'] == axon_id) | (seg['assigned'] == axon_id)
+    return binary_fill_holes(reg).astype(np.uint8)
 
 
 def render(gray: np.ndarray, seg: dict, alpha: float = 0.45) -> np.ndarray:
-    """Colour the axon interiors and myelin and label each with its g-ratio."""
+    """Overlay: per-axon colour fills, axon + myelin borders, bubble outlines,
+    and the g-ratio drawn at each axon centroid."""
     if gray.ndim != 2:
         gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
     base = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
-    overlay = base.copy()
-    overlay[seg['lumen_label'] > 0] = AXON_COLOR
-    overlay[seg['assigned'] > 0] = MYELIN_COLOR
-    out = cv2.addWeighted(overlay, alpha, base, 1 - alpha, 0)
+    ov = base.copy()
+    for a in seg['axons']:
+        col = _palette(a['id'] - 1)
+        ov[seg['axon_lbl'] == a['id']] = col
+        ov[seg['assigned'] == a['id']] = tuple(int(c * 0.5) for c in col)  # myelin = darker shade
+    out = cv2.addWeighted(ov, alpha, base, 1 - alpha, 0)
+
+    # bubble outlines (holes in the sheath -> not myelin)
+    cs, _ = cv2.findContours(seg['bubble'].astype(np.uint8), cv2.RETR_EXTERNAL,
+                             cv2.CHAIN_APPROX_SIMPLE)
+    cv2.drawContours(out, cs, -1, (0, 0, 255), 1, cv2.LINE_AA)
+
+    for a in seg['axons']:
+        col = _palette(a['id'] - 1)
+        myel_out = _axon_region(seg, a['id'])
+        cs, _ = cv2.findContours(myel_out, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(out, cs, -1, col, 2, cv2.LINE_AA)             # myelin outer border
+        ax = (seg['axon_lbl'] == a['id']).astype(np.uint8)
+        cs, _ = cv2.findContours(ax, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(out, cs, -1, (255, 255, 255), 2, cv2.LINE_AA)  # axon border
+
     for a in seg['axons']:
         txt = f"{a['g']:.2f}"
-        scale = max(0.5, a['r'] / 45)
-        th = max(1, int(scale * 2))
+        scale = max(0.5, a['r'] / 55)
+        th = max(1, int(round(scale * 2)))
         (tw, tht), _ = cv2.getTextSize(txt, cv2.FONT_HERSHEY_SIMPLEX, scale, th)
         org = (int(a['cx'] - tw / 2), int(a['cy'] + tht / 2))
-        cv2.putText(out, txt, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), th + 2, cv2.LINE_AA)
+        cv2.putText(out, txt, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (0, 0, 0), th + 3, cv2.LINE_AA)
         cv2.putText(out, txt, org, cv2.FONT_HERSHEY_SIMPLEX, scale, (255, 255, 255), th, cv2.LINE_AA)
     return out
 
 
+def render_comparison(gray: np.ndarray, seg: dict, gap: int = 8) -> np.ndarray:
+    """Side-by-side [ original | overlay ] so the highlighting can be verified."""
+    if gray.ndim != 2:
+        gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+    left = cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR)
+    right = render(gray, seg)
+    H = gray.shape[0]
+    sep = np.full((H, gap, 3), 255, np.uint8)
+
+    def banner(img, text):
+        out = img.copy()
+        cv2.rectangle(out, (0, 0), (out.shape[1], 34), (0, 0, 0), -1)
+        cv2.putText(out, text, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (255, 255, 255), 2, cv2.LINE_AA)
+        return out
+
+    return np.hstack([banner(left, "original"), sep, banner(right, "g-ratio overlay")])
+
+
 def analyze_image(gray: np.ndarray, **overrides):
-    """Convenience: return (overlay_bgr, axons_list) for a grayscale image."""
+    """Convenience: return (comparison_bgr, axons_list) for a grayscale image."""
     seg = segment(gray, **overrides)
-    return render(gray, seg), seg['axons']
+    return render_comparison(gray, seg), seg['axons']
