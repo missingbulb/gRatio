@@ -119,12 +119,34 @@ label them only as *"myelin deformations (G3680 mouse)"* and *"healthy myelin
   This threshold directly affects g for loosely-myelinated axons and is a
   modelling choice worth calibrating against expert tracing.
 
+## Validation & tests
+
+A baseline of **regular** axons with **known** g-ratios is mirrored in
+`data/reference/axondeepseg_sem/` — real SEM cross-sections of rat spinal cord
+with manual axon/myelin masks (AxonDeepSeg, MIT). `gratio/reference.py` computes
+the trusted per-axon g-ratio directly from those masks
+(`g = sqrt(axon_area / (axon_area + myelin_area))`); across 1642 axons the mean
+is **0.655** (per-sample 0.61–0.69), i.e. textbook-normal.
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q          # synthetic exact-answer + real ground-truth regression tests
+```
+
+Tests cover (a) synthetic perfect annuli where `g = r_in/r_out` exactly, and
+(b) regression on the real ground-truth distribution. The image **pipeline** is
+not yet benchmarked against this ground truth — that is the next step, and note
+the SEM data has **inverted contrast** (bright myelin) vs. the TEM samples.
+
 ## Layout
 
 ```
-gratio/pipeline.py   core: segment(), render(), analyze_image(), DEFAULTS
-analyze.py           CLI
-data/samples/        sample EM micrographs (+ README)
-outputs/             example overlays + CSVs
-docs/reference/      distilled notes + figures from the MyelTracer paper
+gratio/pipeline.py            core: segment(), render(), analyze_image(), DEFAULTS
+gratio/reference.py           ground-truth g-ratio from segmentation masks
+analyze.py                    CLI
+data/samples/                 sample TEM micrographs (the user's images)
+data/reference/axondeepseg_sem/  regular-axon SEM images + masks + ground-truth g
+outputs/                      example overlays + CSVs
+tests/                        synthetic + ground-truth regression tests
+docs/reference/               distilled notes + figures from the MyelTracer paper
 ```
