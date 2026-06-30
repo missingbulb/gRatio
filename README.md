@@ -44,9 +44,11 @@ Each input produces a side-by-side `<name>_gratio.png` (left: the original;
 right: the overlay) and `<name>_gratio.csv` (per-axon `g_ratio`,
 `axon_area_px`, `myelin_area_px`, centroid, equivalent radius, solidity). In the
 overlay, **each axon+myelin pair gets its own colour**, the axon body is drawn
-with a white border, the myelin band with a coloured outer border, **bubbles**
-(holes in the sheath) are outlined in red, and the g-ratio is printed at the
-axon centroid. Use `--overlay-only` to skip the side-by-side.
+with a white (inner) border, the myelin band with a coloured (outer) border —
+both **smooth, roughly-closed shapes**, not pixel-following outlines —
+**bubbles** (holes / missing myelin in the sheath) are filled red, and the
+g-ratio is printed at the axon centroid. Use `--overlay-only` to skip the
+side-by-side.
 
 Programmatic use:
 
@@ -62,15 +64,18 @@ comparison = render_comparison(gray, seg)   # original | overlay
 
 ## Structural model
 
-Each fiber is treated as a set of **contiguous bodies**, not loose pixels:
+Each fiber is a set of contiguous bodies with **smooth, roughly-closed borders**
+(not strict ovals, and not intricate pixel-following outlines):
 
-- **axon** — a contiguous bright body (the axoplasm), with intra-axonal granules
-  filled in. Its border is the inner border of the myelin.
-- **myelin** — a contiguous dark band that *touches* the axon, of bounded
-  thickness, with an outer border and an inner border.
-- **bubble** — a bright pocket fully enclosed by the sheath (a hole in the
-  myelin). Bubbles are **not** myelin: they are excluded from `A_myelin` and
-  highlighted, because they are exactly the malformation we want to surface.
+- **axon** — a smoothed bright body (the axoplasm); its border is the inner
+  border of the myelin.
+- **myelin** — a smoothed band around the axon, of bounded thickness; a band
+  shared by touching fibers is split by nearest axon, so neighbours are not
+  confused.
+- **bubble** — a *significant* bright hole in the band (a vacuole, or a stretch
+  of missing / non-hermetic myelin). Bubbles are **not** myelin: they are
+  excluded from `A_myelin` and highlighted, because they are exactly the
+  malformation we want to surface.
 
 ## How it works
 
@@ -79,12 +84,12 @@ Each fiber is treated as a set of **contiguous bodies**, not loose pixels:
 3. fiber region = myelin closed enough to **seal broken rings**, then
    hole-filled — this isolates each axon's bright body from the background even
    when the surrounding ring is incomplete (the malformed case)
-4. axon bodies = bright bodies inside fibers passing area / solidity /
-   brightness; intra-axonal granules filled in
-5. myelin = dark band contiguous with an axon, within a thickness cap; a band
-   shared by touching fibers is split by nearest axon
-6. bubbles = enclosed holes in (axon ∪ myelin); excluded from myelin
-7. g per axon from the area formula above
+4. axon bodies = bright bodies inside fibers passing area / solidity / brightness
+5. myelin = dark band touching an axon, within a thickness cap; a band shared by
+   touching fibers is split by nearest axon
+6. smooth the axon body and the (axon ∪ myelin) region into roughly-closed shapes
+7. bubbles = significant bright holes in the smoothed annulus; excluded from myelin
+8. g per axon from the area formula above
 
 The g-ratio is **dimensionless**, so no spatial calibration is needed; the
 sample images' scale bars are not used.
@@ -94,8 +99,13 @@ sample images' scale bars are not used.
 Working prototype. Validated on the three sample micrographs in
 `data/samples/` — see `outputs/` for the generated side-by-side results. All
 axons (including the **malformed central axon in `sample_01`**) are detected;
-per-axon g-ratios land in the expected textbook range (~0.75–0.83 for these
+per-axon g-ratios land in the expected textbook range (~0.75–0.86 for these
 moderately myelinated fibers).
+
+No reference (ground-truth) g-ratios exist for these images — the source slides
+label them only as *"myelin deformations (G3680 mouse)"* and *"healthy myelin
+(WT mouse)"*. `render()` accepts a `references` dict (axon id → g) to print a
+`ref` value beneath ours once manual tracings are available.
 
 **Open issues / next steps.**
 - *Malformed-axon boundary.* Where the ring is badly broken (left side of the
