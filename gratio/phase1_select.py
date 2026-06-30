@@ -9,7 +9,23 @@ from scipy.ndimage import binary_fill_holes, label as cc_label
 
 SEL = {1:[2,9,11,12], 2:[7], 3:[3,4,6,8,10]}
 
-def refine(gf, mask):
+from scipy.ndimage import gaussian_filter1d
+
+def smooth_edge_aware(mask, H, W, frac=0.05, tol=2):
+    """Low-pass the contour, but hold points on the image border fixed so a
+    cropped axon's border stays straight along the image edge."""
+    cs,_=cv2.findContours(mask.astype(np.uint8),cv2.RETR_EXTERNAL,cv2.CHAIN_APPROX_NONE)
+    if not cs: return None
+    c=max(cs,key=cv2.contourArea).reshape(-1,2).astype(np.float64)
+    if len(c)<12: return c.astype(np.int32)
+    s=max(2.0,frac*len(c))
+    sx=gaussian_filter1d(c[:,0],s,mode='wrap'); sy=gaussian_filter1d(c[:,1],s,mode='wrap')
+    on_edge=(c[:,0]<=tol)|(c[:,0]>=W-1-tol)|(c[:,1]<=tol)|(c[:,1]>=H-1-tol)
+    sx[on_edge]=c[on_edge,0]; sy[on_edge]=c[on_edge,1]      # keep image-edge points put
+    return np.stack([sx,sy],1).astype(np.int32)
+
+def refine(gf, mask, dilate_px=5):
+    H,W=mask.shape
     img=gaussian(gf.astype(np.float64)/255.0, sigma=2)
     ls=MCV(img, num_iter=40, init_level_set=mask.astype(np.uint8), smoothing=3,
            lambda1=1.0, lambda2=1.1)
@@ -19,7 +35,10 @@ def refine(gf, mask):
     else:
         ls=mask
     ls=binary_fill_holes(ls)
-    poly=canon._smooth_contour(ls, frac=0.05)
+    if dilate_px>0:                                          # masks were a touch shy -> grow a bit
+        k=cv2.getStructuringElement(cv2.MORPH_ELLIPSE,(2*dilate_px+1,)*2)
+        ls=cv2.dilate(ls.astype(np.uint8),k)>0
+    poly=smooth_edge_aware(ls, H, W, frac=0.05)
     out=np.zeros_like(mask,np.uint8)
     if poly is not None: cv2.fillPoly(out,[poly],1)
     return out>0, poly
