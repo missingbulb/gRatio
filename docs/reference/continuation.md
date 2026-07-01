@@ -38,7 +38,7 @@ Diagnostics used during tuning (kept for reference):
 1. optional **scale-bar removal** (`_remove_scalebar`, gated: only in clean background).
 2. bilateral filter; **myelin threshold** (`myelin_percentile`) seals rings, isolates axon compartments.
 3. **axon detection**: compartments passing area/solidity/brightness (`min_axon_frac` etc.).
-4. **myelin assignment**: dark material touching an axon within `max(myelin_band*r, myelin_band_floor)`; shared bands split by nearest axon.
+4. **myelin assignment**: dark material touching an axon, capped at `myelin_thickness_mult` × the axon's own measured ring thickness (median distance-to-axon of its dark material); shared bands split by nearest axon.
 5. **inner border** refined per fibre by an Otsu **peel** (`axon_otsu_bias`) + smoothing (`axon_smooth_frac`).
 6. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
 7. **final border refit** as least-squares smooth curves (`border_smooth_tol`, `border_min_radius`).
@@ -49,17 +49,17 @@ Diagnostics used during tuning (kept for reference):
 |-------|-------|-----------------------|
 | `myelin_percentile` / `myelin_fill_percentile` | 28 / 34 | decouple axon-separation threshold from the myelin-band threshold (fixed under-captured myelin without spawning false axons) — R10/R11 |
 | `min_axon_frac` | 0.02 | size floor that culls false-positive background pockets while keeping every real axon — R11 |
-| `myelin_band` | 0.5 | physiological radial myelin cap (removed the extracellular over-reach) — R15 |
-| `myelin_band_floor` | 80 px | **absolute** floor so small axons keep their full myelin width — R18 |
+| `myelin_thickness_mult` | 3.0 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant) and independent of axon radius (no g-ratio circularity). Replaced the `myelin_band`/`myelin_band_floor` radius+pixel cap — R15/R18/**R20** |
 | `axon_otsu_bias` | 10 | per-fibre Otsu peel places the axolemma at the true inner-myelin edge — R13 |
 | `axon_smooth_frac` | 0.6 | smooth the axon border into a simple curve — R13 |
 | `fiber_smooth_frac` | 0.2 | smooth the fibre outer envelope, remove spikes — R15 |
 | `border_smooth_tol` / `border_min_radius` | 2.0 / 6.0 | final Bézier-style curve refit (no shrink; protects tiny axons) — R14 |
 | `remove_scalebar` | True | detect + inpaint the "200 nm" ruler, but only in clean background — R22/R12 |
 
-Note: the size/px values (`min_axon_frac`, `myelin_band_floor`, `border_*`) are
-**calibrated to these images' magnification**; revisit them for data at a
-different scale (see F5).
+Note: the remaining px values (`speckle_min`, `close_fiber`, `myelin_close`,
+`border_*`, `vacuole_*`) are still **calibrated to these images' magnification**;
+revisit them for data at a different scale (see F5). The outer-myelin cap
+(`myelin_thickness_mult`) is no longer among them — it is measured in-image.
 
 ## Open items (see requirements.md for the full list)
 

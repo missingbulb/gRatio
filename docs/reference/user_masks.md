@@ -126,9 +126,9 @@ no false positives**, then maximise class overlap.
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
 | sample_01  | 0.92 | 0.71 | 0.88 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.80 | 0.91 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
-| **mean**   | **0.94** | **0.78** | **0.91** | **1.00 / 1.00** |
+| sample_02  | 0.96 | 0.80 | 0.90 | 1.00 / 1.00 |
+| sample_03  | 0.92 | 0.81 | 0.95 | 1.00 / 1.00 |
+| **mean**   | **0.94** | **0.77** | **0.91** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -194,32 +194,61 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    now-sealed ring. Gain: sample_01 myelin +0.04, mean +0.01 (sample_02 -0.01
    as a minority of near-boundary bright pockets get included there too).
 
-6. *Myelin band floor too tight for cluster axons* (sample_01 #1, #3, #4).
-   In a malformed cluster the inter-axon myelin walls are thick relative to the
-   axon radius: small axons (r ≈ 80 px) have GT myelin extending > 130 px from
-   their centre, but the old floor cap (`myelin_band_floor=80`) stops capture at
-   80 px. Raising the floor to 110 px captures the additional lamellae; crucially
-   it does not affect large isolated axons such as sample_02 (r ≈ 300 px, whose
-   radius-based cap `0.5 × 300 = 150 px` already exceeds the floor). Gain:
-   sample_01 myelin +0.05, mean +0.02; sample_02/03 unchanged.
+6. *Outer myelin cap was resolution-dependent and g-ratio-circular* (R20).
+   The band was capped at `max(myelin_band · r_axon, myelin_band_floor)` — a
+   fraction of the axon radius, floored by an absolute pixel count. Both parts
+   are unsound as general defaults: the pixel floor is pinned to *these images'
+   magnification* (a scan at another pixel size clips at a different physical
+   distance), and capping myelin thickness at a fraction of the axon radius
+   **bakes a g-ratio prior into a g-ratio measurement** — for a circular axon,
+   `myelin_band=0.5` makes it structurally impossible to report g < √(1/2.25) ≈
+   0.67, so genuinely thick myelin (low g) is clipped and read back high.
+
+   Why a cap is needed at all: an *isolated* fibre (sample_02, one axon in the
+   field) has no neighbouring axon to arbitrate its territory, so "dark material
+   connected to the axon" grows across bright extracellular gaps and vacuums up
+   unrelated dark blobs (≈30 % over-reach with no cap). In multi-axon fields the
+   nearest-axon (Voronoi) split already bounds each fibre, so the cap barely
+   binds there (2–4 % over-reach). Appearance cannot separate the over-reach —
+   it is texturally identical to real myelin (brightness, structure-tensor
+   coherence, local variance all indistinguishable), because it *is* myelin from
+   adjacent unannotated fibres. Only geometry separates it.
+
+   Fix (`myelin_thickness_mult=3.0`): cap the band at a multiple of the axon's
+   **own measured ring thickness** — the median distance-to-axon of the dark
+   material hugging it. This is derived from the image (resolution-independent,
+   no pixel constant) and is **not** a fraction of the axon radius (no g-ratio
+   circularity): a thickly-myelinated axon gets a larger cap because its measured
+   ring is genuinely thicker, not because we assumed a thickness. The measured
+   thickness scales correctly and unsupervised — sample_03's thin myelin yields a
+   small cap (~40 px), sample_02's thick myelin a large one (~155 px) — and the
+   result is accuracy-neutral vs the old radius+floor cap (mean myelin 0.777 →
+   0.772, fibre 0.912 → 0.909; recall still 1.00/1.00). The only residual
+   assumption is intra-fibre: the outer boundary lies within a few ring
+   thicknesses (a wedge ballooning many-fold is a neighbour, not this myelin).
+   An optional absolute ceiling (`myelin_band`, default off) remains for datasets
+   that need to hard-limit the measured cap (e.g. inverted-contrast SEM).
 
 The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=34`, `myelin_band=0.5`, `myelin_band_floor=110`,
-`min_axon_frac=0.02`, `enclose_outer_vacuoles=True`; values calibrated against
-this ground truth.
+`myelin_fill_percentile=34`, `myelin_thickness_mult=3.0`, `min_axon_frac=0.02`,
+`enclose_outer_vacuoles=True`; the thresholds are calibrated against this ground
+truth but the outer-myelin cap is now scale-free and prior-free.
 
 **Known residual limits:**
-- A small dark extracellular lobe can abut the myelin with no bright gap
-  between them; the radial cap and vacuole-enclosure together handle most cases
-  but do not fully reject every lobe (sample_02, top-left, −0.01 residual).
+- An isolated fibre's outer bound rests on the measured-thickness cap, not on an
+  image edge, because the over-reaching material is texturally identical to real
+  myelin (adjacent unannotated fibres) and only geometry separates it. The cap is
+  now scale-free and prior-free but is still a geometric heuristic, not evidence
+  of an outer membrane (sample_02, ≈−0.01 residual).
 - Touching cells are not yet split *along the hand-drawn inter-cell line*; the
   outer border of each fibre is captured but the shared wall between two cells'
   myelin is assigned by nearest-axon, not by that line.
 - sample_01's myelin IoU stays lowest, partly definitional — the hand-traced
   myelin there is generous and includes the orange omit regions (not yet excluded).
-- Cluster axons with the thickest myelin walls (sample_01 #3) still under-capture
-  myelin (per-axon IoU ≈ 0.48): the GT myelin extends > 130 px from the axon but
-  the band is capped at 110 px to avoid pulling in extracellular material.
+- Cluster axons with the thickest myelin walls (sample_01 #3, per-axon IoU ≈ 0.48)
+  under-capture myelin for an *upstream* reason, not the cap: much of that hand-
+  traced myelin is never marked dark by the fill threshold or is not connected to
+  the axon's dark ring, so raising the cap alone cannot recover it.
 
 The harness and the perfect-recall / no-false-positive guarantees are pinned by
 `tests/test_evaluate.py`.

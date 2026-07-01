@@ -69,11 +69,22 @@ DEFAULTS = dict(
     min_solidity=0.90,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
-    myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius...
-    myelin_band_floor=110,    # ...but at least this many px, so small axons with proportionally thick
-                              # myelin are not clipped. The floor applies only when myelin_band*r < floor
-                              # (i.e. r < 2*floor = 220 px), so large single axons (sample_02, r≈300)
-                              # retain their radius-based cap unaffected. Calibrated on sample_01 cluster.
+    myelin_thickness_mult=3.0,  # outer myelin cap = this multiple of the axon's OWN measured
+                              # ring thickness (the median distance-to-axon of the dark material
+                              # hugging it). This bounds how far the band grows outward so an
+                              # isolated fibre does not vacuum up dark extracellular material that
+                              # connects to it (there is no neighbouring axon to arbitrate). It is
+                              # derived from the image, not from a pixel count, so it is
+                              # resolution-independent; and it is NOT a fraction of the axon radius,
+                              # so it does not bake a g-ratio prior into a g-ratio measurement --
+                              # a thickly-myelinated axon gets a proportionally larger cap because
+                              # its measured ring is thicker, not because we assumed it. The only
+                              # residual assumption is intra-fibre: the outer boundary is within a
+                              # few ring-thicknesses of the axon (a wedge ballooning many-fold is a
+                              # neighbour bleeding in, not this fibre's myelin).
+    myelin_band=None,         # optional ABSOLUTE ceiling as a fraction of axon radius; None = off.
+                              # Only useful to hard-limit a dataset where the measured-thickness cap
+                              # is not enough (e.g. inverted-contrast SEM tuning in reference_run.py).
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     axon_otsu_bias=10,        # the axon border is refined per fibre: Otsu-split the fibre into bright
@@ -371,11 +382,22 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     myelin_keep = np.isin(myl_lab, touch)
     dist, (iy, ix) = distance_transform_edt(axon_lbl == 0, return_indices=True)
     nearest = axon_lbl[iy, ix]
+    # Outer myelin cap, per axon, derived from the axon's OWN ring thickness rather
+    # than from a pixel count or a fraction of the axon radius (see myelin_thickness_mult).
+    # thickness = median distance-to-axon of the dark material assigned to this axon;
+    # the median is robust to the far extracellular blobs that inflate the tail.
+    uncapped = myelin_keep & (nearest > 0)
     r_by = np.zeros(len(cands) + 1)
+    cap_by = np.zeros(len(cands) + 1)
     for a in cands:
         r_by[a['id']] = a['r']
-    band_cap = np.maximum(P['myelin_band'] * r_by[nearest], P['myelin_band_floor'])
-    assigned = np.where(myelin_keep & (nearest > 0) & (dist <= band_cap), nearest, 0)
+        d = dist[uncapped & (nearest == a['id'])]
+        thick = float(np.median(d)) if d.size else 0.0
+        cap_by[a['id']] = P['myelin_thickness_mult'] * thick
+    band_cap = cap_by[nearest]
+    if P.get('myelin_band'):                     # optional absolute ceiling (usually off)
+        band_cap = np.minimum(band_cap, P['myelin_band'] * r_by[nearest])
+    assigned = np.where(uncapped & (dist <= band_cap), nearest, 0)
 
     axon_mask = np.zeros((H, W), np.int32)
     myelin_mask = np.zeros((H, W), np.int32)
