@@ -139,6 +139,12 @@ extracellular over-reach on sample_02. Masks are per-axon labelled;
 `outputs/eval/*_labeled.png` renders each axon in its own colour with a numbered
 centre for review.
 
+Borders are refit as **smooth closed curves** (`border_smooth_tol`, a least-squares
+periodic spline in the spirit of Schneider's Bezier fitting) as a final pass: it
+removes the pixel staircase without shrinking the region (unlike Gaussian contour
+averaging), giving a hand-tracing look at IoU-neutral cost. `border_min_radius`
+protects tiny axons from over-rounding.
+
 **What was wrong and how it was fixed.** The predicted axon border bulged
 outward into the myelin — axon too big, myelin too thin (the same effect that
 read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced

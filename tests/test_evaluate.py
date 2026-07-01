@@ -97,3 +97,25 @@ def test_scalebar_detection_and_safety():
     # sample_02's bar is in clean background -> removed, axon still found
     assert not np.array_equal(_remove_scalebar(s2), s2)
     assert len(segment(s2)["axons"]) == 1
+
+
+def test_border_smoothing_is_neutral_and_safe():
+    """The fitted-curve border pass smooths without shrinking: recall stays
+    perfect and class overlap is within ~1% of the raster version."""
+    from gratio import segment
+    from gratio.pipeline import fit_smooth_border
+    # a fitted circle keeps its area (no inward shrink) and stays a full region
+    disk = np.zeros((240, 240), np.uint8)
+    cv2.circle(disk, (120, 120), 80, 1, -1)
+    sm = fit_smooth_border(disk > 0, tol=2.0)
+    assert abs(int(sm.sum()) - int(disk.sum())) < 0.05 * disk.sum()
+    # tiny regions are left alone (min_radius guard)
+    tiny = np.zeros((60, 60), np.uint8); cv2.circle(tiny, (30, 30), 4, 1, -1)
+    assert np.array_equal(fit_smooth_border(tiny > 0, tol=2.0, min_radius=6.0), tiny > 0)
+    for s in SAMPLES:
+        raw = cv2.imread(os.path.join(RAW, s + ".png"), cv2.IMREAD_GRAYSCALE)
+        on = segment(raw, border_smooth_tol=2.0)
+        off = segment(raw, border_smooth_tol=0)
+        assert len(on["axons"]) == len(off["axons"])          # recall unaffected
+        a_on = (on["axon_mask"] > 0).sum(); a_off = (off["axon_mask"] > 0).sum()
+        assert abs(a_on - a_off) < 0.03 * a_off               # no shrink

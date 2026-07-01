@@ -52,6 +52,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc_label
+from scipy.interpolate import splprep, splev
 
 # Default parameters. Override per call via segment(..., **overrides).
 DEFAULTS = dict(
@@ -83,6 +84,9 @@ DEFAULTS = dict(
     fiber_smooth_frac=0.2,    # smooth the fibre outer bound (open then close) by this fraction of the
                               # axon radius, so it is a clean rounded envelope like a hand tracing
                               # instead of a spiky outline that reaches into the extracellular space
+    border_smooth_tol=2.0,    # final pass: refit axon+fibre borders as smooth curves within this many px
+                              # (least-squares spline; removes pixel staircase without shrinking). 0 = off
+    border_min_radius=6.0,    # ...but do not refit a region whose equivalent radius is below this (px)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
 )
@@ -157,6 +161,40 @@ def _smooth(mask, k):
     m = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, el)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, el)
     return binary_fill_holes(m > 0)
+
+
+def fit_smooth_border(mask, tol=2.0, min_radius=0.0):
+    """Replace a raster region's boundary with a fitted smooth closed curve.
+
+    Least-squares periodic spline fit (in the spirit of Schneider's Bezier
+    fitting): unlike Gaussian contour averaging it does not shrink the shape, so
+    it removes the pixel staircase without thinning the region. `tol` (px) trades
+    curve tightness vs smoothness; `min_radius` (px) refuses to smooth a region
+    whose equivalent radius is below it (protects tiny axons from over-rounding).
+    Falls back to the input mask on a degenerate fit (area drift > 12%)."""
+    m = mask.astype(np.uint8)
+    if tol <= 0 or m.sum() == 0:
+        return mask
+    cnts, _ = cv2.findContours(m, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not cnts:
+        return mask
+    c = max(cnts, key=cv2.contourArea)
+    a0 = cv2.contourArea(c)
+    pts = c[:, 0, :].astype(float)
+    n = len(pts)
+    if n < 24 or a0 < np.pi * min_radius * min_radius:
+        return mask
+    try:
+        tck, _ = splprep([pts[:, 0], pts[:, 1]], s=n * tol * tol, per=1)
+        xs, ys = splev(np.linspace(0, 1, max(200, n)), tck)
+    except Exception:
+        return mask
+    out = np.zeros_like(m)
+    cv2.fillPoly(out, [np.stack([xs, ys], 1).round().astype(np.int32)], 1)
+    a1 = float(out.sum())
+    if a1 == 0 or abs(a1 - a0) > 0.12 * a0:      # degenerate fit -> keep original
+        return mask
+    return out > 0
 
 
 def _peel_axon(gf, fiber, cx, cy, bias, k):
@@ -329,6 +367,27 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         bubble |= gap
         axons.append(dict(id=a['id'], cx=a['cx'], cy=a['cy'], r=a['r'],
                           solidity=a['solidity'], area=A_ax, myelin_area=A_my, g=g))
+
+    # final polish: refit each axon + fibre border as a smooth curve (vector-like,
+    # hand-tracing look) without shrinking; bubbles stay excluded from myelin.
+    if P['border_smooth_tol'] > 0 and axons:
+        sa = np.zeros((H, W), np.int32)
+        sf = np.zeros((H, W), np.int32)
+        for a in axons:
+            fs = fit_smooth_border(fiber_mask == a['id'],
+                                   P['border_smooth_tol'], P['border_min_radius'])
+            as_ = fit_smooth_border(axon_mask == a['id'],
+                                    P['border_smooth_tol'], P['border_min_radius']) & fs
+            sf[fs] = a['id']
+            sa[as_] = a['id']
+        axon_mask, fiber_mask = sa, sf
+        myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble,
+                               fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
 
     return dict(gf=gf, T=T, axons=axons, axon_mask=axon_mask, myelin_mask=myelin_mask,
                 fiber_mask=fiber_mask, bubble=bubble)
