@@ -96,16 +96,20 @@ sample images' scale bars are not used.
 
 ## Status
 
-Working prototype. Validated on the three sample micrographs in
-`data/samples/` — see `outputs/` for the generated side-by-side results. All
-axons (including the **malformed central axon in `sample_01`**) are detected;
-per-axon g-ratios land in the expected textbook range (~0.75–0.86 for these
-moderately myelinated fibers).
+Working prototype, validated against **hand-drawn ground-truth masks** of the
+three sample micrographs. The segmentation runs on the raw grayscale images and
+is scored by mask overlap (IoU) — current means: **axon 0.93 / myelin 0.76 /
+fibre 0.90, detection recall & precision 1.00** (baseline before tuning was
+0.74 / 0.51 / 0.80, recall 0.80). Run `python evaluate_segmentation.py`.
 
-No reference (ground-truth) g-ratios exist for these images — the source slides
-label them only as *"myelin deformations (G3680 mouse)"* and *"healthy myelin
-(WT mouse)"*. `render()` accepts a `references` dict (axon id → g) to print a
-`ref` value beneath ours once manual tracings are available.
+New to the project? Read these first:
+
+- [`docs/reference/requirements.md`](docs/reference/requirements.md) — the
+  project owner's requirements, gathered from the working sessions.
+- [`docs/reference/continuation.md`](docs/reference/continuation.md) — how to
+  resume: current state, how to run, the tuned parameters and why, open items.
+- [`docs/reference/user_masks.md`](docs/reference/user_masks.md) — full method
+  narrative, per-sample results, and the ground-truth registration.
 
 **Open issues / next steps.**
 - *Malformed-axon boundary.* Where the ring is badly broken (left side of the
