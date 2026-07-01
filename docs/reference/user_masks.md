@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.89 | 0.56 | 0.78 | 1.00 / 1.00 |
-| sample_02  | 0.84 | 0.65 | 0.90 | 1.00 / 1.00 |
-| sample_03  | 0.88 | 0.76 | 0.96 | 1.00 / 1.00 |
-| **mean**   | **0.87** | **0.66** | **0.88** | **1.00 / 1.00** |
+| sample_01  | 0.88 | 0.58 | 0.78 | 1.00 / 1.00 |
+| sample_02  | 0.90 | 0.74 | 0.90 | 1.00 / 1.00 |
+| sample_03  | 0.91 | 0.82 | 0.96 | 1.00 / 1.00 |
+| **mean**   | **0.90** | **0.71** | **0.88** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -154,18 +154,34 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    physiological cap (`myelin_band=0.5`) removes most of it: sample_02 myelin
    0.58→0.65, fibre 0.83→0.90.
 
-The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=34`, `myelin_band=0.5`, `min_axon_frac=0.02`; the size
-threshold is calibrated against this ground truth.
+4. *Axon border ran systematically ~15 % large.* Diagnosed with a 12-detector
+   border survey (`border_survey.py`, montages in `outputs/borders/`): the
+   ridge filters (frangi/sato) and the structure-tensor coherence map showed the
+   axon body was stopping one dark lamella *past* the true axolemma on every
+   axon. The over-reach is a smooth radial bias, so `axon_shrink_frac=0.06`
+   pulls the border in by 6 % of the axon radius and hands the freed periaxonal
+   ring to myelin (done after bubble detection so the light ring is not mistaken
+   for a vacuole). This lifted mean axon 0.87→0.90 and myelin 0.66→0.71, and
+   brought the sample_02 g-ratio 0.75→0.69 (hand-traced ~0.70).
 
-**Known residual limits** (boundary-detection, not tunable by a knob):
-- sample_02's axon still runs ~20 % large: it grows out to the innermost *dark*
-  lamella, but the traced axolemma sits inside that, in the light periaxonal
-  collar — two bright regions intensity can't separate. This keeps the area
-  g-ratio a touch high (0.75 vs ~0.70 traced).
+   Note: guiding that shrink with the structure-tensor / frangi ridge directly
+   (snap-to-innermost-lamella) was tried and *underperformed* the uniform
+   correction (axon 0.87 vs 0.90) — the ridge/coherence signal penetrates the
+   axoplasm irregularly and carves the border unevenly. So the structure tensor
+   was the diagnostic, but a geometric bias correction is the fix.
+
+The relevant `segment` defaults are now `myelin_percentile=28`,
+`myelin_fill_percentile=34`, `myelin_band=0.5`, `min_axon_frac=0.02`,
+`axon_shrink_frac=0.06`; the size / shrink values are calibrated against this
+ground truth.
+
+**Known residual limits:**
 - A small dark extracellular lobe can abut the myelin with no bright gap
   between them; a radial cap that keeps genuinely thick myelin cannot fully
-  reject it.
+  reject it (sample_02, top-left).
+- Touching cells are not yet split *along the hand-drawn inter-cell line*; the
+  outer border of each fibre is captured but the shared wall between two cells'
+  myelin is assigned by nearest-axon, not by that line.
 - sample_01's myelin IoU stays lowest, partly definitional — the hand-traced
   myelin there is very generous and still includes the orange omit regions.
 

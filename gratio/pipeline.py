@@ -70,6 +70,10 @@ DEFAULTS = dict(
     myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
+    axon_shrink_frac=0.06,    # pull the axon border in by this fraction of the axon radius: the body
+                              # grows out to the innermost dark lamella, ~one lamella past the true
+                              # axolemma, so this corrects that systematic outward bias (the freed
+                              # ring becomes myelin). Calibrated against the hand masks.
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
 )
@@ -217,6 +221,16 @@ def segment(gray: np.ndarray, **overrides) -> dict:
             if hm.sum() >= bmin:
                 gap |= hm
         myel_here = annulus & ~gap
+        # correct the systematic outward bias: the body stops at the innermost dark
+        # lamella, ~one lamella past the axolemma. Pull the border in and hand the
+        # freed periaxonal ring to myelin (it is done AFTER bubble detection so the
+        # light inner ring is not mistaken for a vacuole).
+        ks = int(round(2 * P['axon_shrink_frac'] * a['r'])) | 1
+        if P['axon_shrink_frac'] > 0 and ks >= 3:
+            am_in = cv2.erode(am.astype(np.uint8),
+                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks))).astype(bool)
+            myel_here = myel_here | (am & ~am_in)
+            am = am_in
         A_ax, A_my = int(am.sum()), int(myel_here.sum())
         g = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
         axon_mask[am] = a['id']
