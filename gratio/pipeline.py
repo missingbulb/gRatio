@@ -70,8 +70,10 @@ DEFAULTS = dict(
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
     myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius...
-    myelin_band_floor=80,     # ...but at least this many px, so small axons with proportionally thick
-                              # myelin are not clipped (large axons already exceed it; scale-calibrated)
+    myelin_band_floor=110,    # ...but at least this many px, so small axons with proportionally thick
+                              # myelin are not clipped. The floor applies only when myelin_band*r < floor
+                              # (i.e. r < 2*floor = 220 px), so large single axons (sample_02, r≈300)
+                              # retain their radius-based cap unaffected. Calibrated on sample_01 cluster.
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     axon_otsu_bias=10,        # the axon border is refined per fibre: Otsu-split the fibre into bright
@@ -91,6 +93,18 @@ DEFAULTS = dict(
     bubble_min_px=250,        # ...and at least this many pixels
     detect_bubbles=True,      # if False, bright gaps stay part of the myelin band (bubble
                               # detection deferred to a later stage; nothing highlighted)
+    enclose_outer_vacuoles=True,   # R19: after fiber mask is built, search for bright pockets
+                                   # just outside the boundary that are mostly enclosed by
+                                   # dark myelin and fold them into the fibre (so the outer
+                                   # border wraps *around* the vacuoles instead of notching
+                                   # inward before them). Set False to skip.
+    vacuole_search_px=5,      # how far outside the fibre boundary to search (px); small
+                              # radius catches only vacuoles right at the outer edge
+                              # without reaching open extracellular space
+    vacuole_min_px=150,       # bright pocket must be at least this large to be considered
+    vacuole_enclosed_frac=0.50,  # fraction of the pocket's dilated boundary that must be
+                                  # (myelin material OR current fibre) for it to count as
+                                  # an enclosed vacuole rather than open extracellular space
 )
 
 # Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
@@ -229,6 +243,44 @@ def _peel_axon(gf, fiber, cx, cy, bias, k):
     return _smooth(axon, k) & F
 
 
+def _enclose_outer_vacuoles(fm, myelin_mat, terr, P):
+    """R19: fold bright outer-edge pockets into the fibre mask.
+
+    Where the myelin ring has gaps at its outer edge (bright vacuoles whose far
+    side is not reached by the assigned dark-material band), the fibre boundary
+    notches inward around those gaps instead of wrapping around them.
+
+    Strategy: search for bright blobs just outside the current fibre boundary
+    that are mostly surrounded by (myelin_mat | current_fibre).  Those are
+    interior-to-myelin pockets, not open extracellular space, and should be
+    enclosed by the fibre.  After folding them in, a fresh fill catches any
+    now-enclosed regions beyond.
+    """
+    sr = int(max(5, P['vacuole_search_px']))
+    kd = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2 * sr + 1,) * 2)
+    shell = cv2.dilate(fm.astype(np.uint8), kd).astype(bool) & ~fm & terr
+    bright_shell = shell & ~myelin_mat
+    vlab, nv = cc_label(bright_shell)
+    kb = np.ones((9, 9), np.uint8)
+    changed = False
+    for v in range(1, nv + 1):
+        vm = vlab == v
+        if int(vm.sum()) < P['vacuole_min_px']:
+            continue
+        vdil = cv2.dilate(vm.astype(np.uint8), kb).astype(bool)
+        bnd = vdil & ~vm
+        n_bnd = int(bnd.sum())
+        if n_bnd == 0:
+            continue
+        enclosed = (bnd & (myelin_mat | fm)).sum() / n_bnd
+        if enclosed >= P['vacuole_enclosed_frac']:
+            fm = fm | vm
+            changed = True
+    if changed:
+        fm = binary_fill_holes(fm) & terr
+    return fm
+
+
 def segment(gray: np.ndarray, **overrides) -> dict:
     """Segment axon bodies + myelin bands and compute the area-based g-ratio.
 
@@ -343,6 +395,9 @@ def segment(gray: np.ndarray, **overrides) -> dict:
             fm2 = cv2.morphologyEx(fm.astype(np.uint8), cv2.MORPH_OPEN, el2)
             fm2 = cv2.morphologyEx(fm2, cv2.MORPH_CLOSE, el2)
             fm = binary_fill_holes(fm2 > 0) & terr
+        # R19: enclose bright outer-edge vacuoles that break the myelin ring
+        if P['enclose_outer_vacuoles'] and fm.any():
+            fm = _enclose_outer_vacuoles(fm, myelin_mat, terr, P)
         # refine the axon border to the real inner-myelin edge (per-fibre Otsu peel),
         # then smooth it into a clean rounded shape like a hand tracing
         sk = min(P['axon_smooth_frac'] * a['r'], P['axon_smooth_max'])
