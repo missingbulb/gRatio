@@ -74,9 +74,9 @@ DEFAULTS = dict(
                               # axoplasm vs dark myelin, peel the dark band inward from the fibre edge,
                               # and keep the bright core. This bias nudges the split darker so the border
                               # sits at the axolemma. Calibrated against the hand masks.
-    axon_smooth_frac=0.25,    # smooth the peeled axon border by this fraction of the axon radius, so it
-                              # is a clean rounded shape like a hand tracing (the peel itself is ragged)
-    axon_smooth_max=41,       # ...capped to this absolute kernel size
+    axon_smooth_frac=0.6,     # smooth the peeled axon border by this fraction of the axon radius, so it
+                              # is a simple rounded curve like a hand tracing (the peel itself is ragged)
+    axon_smooth_max=99,       # ...capped to this absolute kernel size
     fiber_smooth_frac=0.2,    # smooth the fibre outer bound (open then close) by this fraction of the
                               # axon radius, so it is a clean rounded envelope like a hand tracing
                               # instead of a spiky outline that reaches into the extracellular space
