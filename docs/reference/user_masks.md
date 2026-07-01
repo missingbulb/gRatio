@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.92 | 0.71 | 0.88 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.80 | 0.90 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.81 | 0.95 | 1.00 / 1.00 |
-| **mean**   | **0.94** | **0.77** | **0.91** | **1.00 / 1.00** |
+| sample_01  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
+| sample_02  | 0.96 | 0.79 | 0.90 | 1.00 / 1.00 |
+| sample_03  | 0.92 | 0.78 | 0.93 | 1.00 / 1.00 |
+| **mean**   | **0.94** | **0.80** | **0.93** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -229,8 +229,24 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    An optional absolute ceiling (`myelin_band`, default off) remains for datasets
    that need to hard-limit the measured cap (e.g. inverted-contrast SEM).
 
+7. *Lighter lamellae fell below the dark threshold* (R21). The binding limit on
+   myelin IoU was not the cap but the fill threshold: ~20-33 % of the hand-traced
+   myelin (sample_01 33 %, sample_02 27 %, sample_03 19 %) is **brighter** than
+   `myelin_fill_percentile=34`, so it was never marked as dark material and no cap
+   could recover it — the hand tracer includes lighter transitional lamellae and
+   inclusions the percentile excludes. Raising the fill threshold to 42 captures
+   them; because it is decoupled from the axon-separation threshold
+   (`myelin_percentile=28`) it does **not** loosen the inter-axon walls, so recall
+   stays 1.0 with no false positives. The extra dark material would over-reach on
+   the open extracellular side, so the thickness cap is tightened in tandem
+   (`myelin_thickness_mult` 3.0 → 2.5) to absorb it. Net: mean myelin 0.77 → 0.80,
+   fibre 0.91 → 0.93; sample_01 (most under-captured) myelin 0.71 → 0.82, fibre
+   0.88 → 0.95. The trade redistributes slightly toward the harder malformed
+   cluster (sample_03 myelin −0.03) but is a clear net gain and attacks the true
+   ceiling rather than the cap.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=34`, `myelin_thickness_mult=3.0`, `min_axon_frac=0.02`,
+`myelin_fill_percentile=42`, `myelin_thickness_mult=2.5`, `min_axon_frac=0.02`,
 `enclose_outer_vacuoles=True`; the thresholds are calibrated against this ground
 truth but the outer-myelin cap is now scale-free and prior-free.
 

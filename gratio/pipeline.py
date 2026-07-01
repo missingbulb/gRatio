@@ -59,7 +59,11 @@ DEFAULTS = dict(
     remove_scalebar=True,     # detect & inpaint a burn-in scale-bar ruler + label before segmenting
     bilateral=(9, 75, 75),    # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
     myelin_percentile=28,     # darkest X% of pixels treated as myelin (axon separation / detection)
-    myelin_fill_percentile=34,  # more inclusive % for the band + inner border (None -> = myelin_percentile)
+    myelin_fill_percentile=42,  # more inclusive % for the band + inner border (None -> = myelin_percentile).
+                              # Decoupled from myelin_percentile (axon separation) so it can be raised to
+                              # capture the lighter transitional lamellae the hand tracer includes -- ~20-33%
+                              # of GT myelin is brighter than the separation threshold -- without loosening
+                              # the walls that separate axons (recall stays 1.0).
     speckle_min=40,           # drop myelin connected components smaller than this (px)
     close_fiber=27,           # seal broken rings to isolate axon bodies
     myelin_close=11,          # close thin inter-lamellar gaps (keeps large gaps open)
@@ -69,7 +73,7 @@ DEFAULTS = dict(
     min_solidity=0.90,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
-    myelin_thickness_mult=3.0,  # outer myelin cap = this multiple of the axon's OWN measured
+    myelin_thickness_mult=2.5,  # outer myelin cap = this multiple of the axon's OWN measured
                               # ring thickness (the median distance-to-axon of the dark material
                               # hugging it). This bounds how far the band grows outward so an
                               # isolated fibre does not vacuum up dark extracellular material that

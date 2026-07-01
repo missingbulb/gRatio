@@ -9,9 +9,9 @@ Current agreement (`evaluate_segmentation.py`, means over the 3 TEM samples):
 
 | metric | value |
 |--------|-------|
-| axon IoU   | 0.93 |
-| myelin IoU | 0.76 |
-| fibre IoU  | 0.90 |
+| axon IoU   | 0.94 |
+| myelin IoU | 0.80 |
+| fibre IoU  | 0.93 |
 | detection precision / recall | **1.00 / 1.00** |
 
 (Baseline before any tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
@@ -47,9 +47,9 @@ Diagnostics used during tuning (kept for reference):
 
 | param | value | purpose / requirement |
 |-------|-------|-----------------------|
-| `myelin_percentile` / `myelin_fill_percentile` | 28 / 34 | decouple axon-separation threshold from the myelin-band threshold (fixed under-captured myelin without spawning false axons) — R10/R11 |
+| `myelin_percentile` / `myelin_fill_percentile` | 28 / 42 | decouple axon-separation threshold from the myelin-band threshold; the fill % is raised to capture lighter lamellae (~20-33% of GT myelin is brighter than the separation %) without spawning false axons — R10/R11/**R21** |
 | `min_axon_frac` | 0.02 | size floor that culls false-positive background pockets while keeping every real axon — R11 |
-| `myelin_thickness_mult` | 3.0 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant) and independent of axon radius (no g-ratio circularity). Replaced the `myelin_band`/`myelin_band_floor` radius+pixel cap — R15/R18/**R20** |
+| `myelin_thickness_mult` | 2.5 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant) and independent of axon radius (no g-ratio circularity). Replaced the `myelin_band`/`myelin_band_floor` radius+pixel cap — R15/R18/**R20**; tightened 3.0→2.5 to absorb the extra dark from R21 |
 | `axon_otsu_bias` | 10 | per-fibre Otsu peel places the axolemma at the true inner-myelin edge — R13 |
 | `axon_smooth_frac` | 0.6 | smooth the axon border into a simple curve — R13 |
 | `fiber_smooth_frac` | 0.2 | smooth the fibre outer envelope, remove spikes — R15 |
