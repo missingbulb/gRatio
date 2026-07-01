@@ -70,10 +70,10 @@ DEFAULTS = dict(
     myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
-    axon_shrink_frac=0.06,    # pull the axon border in by this fraction of the axon radius: the body
-                              # grows out to the innermost dark lamella, ~one lamella past the true
-                              # axolemma, so this corrects that systematic outward bias (the freed
-                              # ring becomes myelin). Calibrated against the hand masks.
+    axon_otsu_bias=10,        # the axon border is refined per fibre: Otsu-split the fibre into bright
+                              # axoplasm vs dark myelin, peel the dark band inward from the fibre edge,
+                              # and keep the bright core. This bias nudges the split darker so the border
+                              # sits at the axolemma. Calibrated against the hand masks.
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
 )
@@ -105,6 +105,36 @@ def _smooth(mask, k):
     m = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, el)
     m = cv2.morphologyEx(m, cv2.MORPH_OPEN, el)
     return binary_fill_holes(m > 0)
+
+
+def _peel_axon(gf, fiber, cx, cy, bias, k):
+    """Refine the axon within a fibre by peeling the dark myelin band inward.
+
+    Otsu-split the fibre's intensities into bright axoplasm vs dark myelin, take
+    the dark material connected to the fibre's outer boundary as the myelin band,
+    and keep the bright core (interior organelles are re-filled). This tracks the
+    real inner-myelin edge locally, instead of a fixed erosion of the body.
+    """
+    F = fiber
+    if F.sum() < 25:
+        return F
+    t, _ = cv2.threshold(gf[F].astype(np.uint8), 0, 255,
+                         cv2.THRESH_BINARY | cv2.THRESH_OTSU)
+    dark = (gf < t + bias) & F
+    dl, _ = cc_label(dark)
+    border = F & ~cv2.erode(F.astype(np.uint8), np.ones((3, 3), np.uint8)).astype(bool)
+    blab = np.unique(dl[border])
+    band = np.isin(dl, blab[blab > 0])
+    core = binary_fill_holes(F & ~band)
+    cl, _ = cc_label(core)
+    cyi, cxi = int(round(cy)), int(round(cx))
+    sid = cl[cyi, cxi] if 0 <= cyi < cl.shape[0] and 0 <= cxi < cl.shape[1] else 0
+    if sid == 0:
+        sizes = np.bincount(cl.ravel())
+        sizes[0] = 0
+        sid = int(sizes.argmax()) if sizes.max() > 0 else 0
+    axon = binary_fill_holes(cl == sid) if sid > 0 else core
+    return _smooth(axon, k) & F
 
 
 def segment(gray: np.ndarray, **overrides) -> dict:
@@ -210,27 +240,22 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         terr = (nearest == a['id']) | (nearest == 0)   # Voronoi territory (split touching fibers)
         k = min(a['r'] * P['smooth_frac'], P['smooth_max_px'])
         fm = _smooth(binary_fill_holes(a['body'] | (assigned == a['id'])) & terr, k)
-        am = _smooth(a['body'] & terr, k) & fm
+        # refine the axon border to the real inner-myelin edge (per-fibre Otsu peel)
+        am = _peel_axon(gf, fm, a['cx'], a['cy'], P['axon_otsu_bias'], k)
         annulus = fm & ~am
         holes = annulus & ~myelin_mat
         hl, nh = cc_label(holes)
         gap = np.zeros((H, W), bool)
         bmin = max(P['bubble_min_px'], P['bubble_min_frac'] * am.sum())
+        # a bright gap is a bubble only if it is an *interior* vacuole; the thin
+        # bright periaxonal ring hugging the axon is myelin, not a bubble.
+        axon_ring = cv2.dilate(am.astype(np.uint8),
+                               np.ones((5, 5), np.uint8)).astype(bool) & ~am
         for h in range(1, nh + 1):
             hm = hl == h
-            if hm.sum() >= bmin:
+            if hm.sum() >= bmin and not (hm & axon_ring).any():
                 gap |= hm
         myel_here = annulus & ~gap
-        # correct the systematic outward bias: the body stops at the innermost dark
-        # lamella, ~one lamella past the axolemma. Pull the border in and hand the
-        # freed periaxonal ring to myelin (it is done AFTER bubble detection so the
-        # light inner ring is not mistaken for a vacuole).
-        ks = int(round(2 * P['axon_shrink_frac'] * a['r'])) | 1
-        if P['axon_shrink_frac'] > 0 and ks >= 3:
-            am_in = cv2.erode(am.astype(np.uint8),
-                              cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks, ks))).astype(bool)
-            myel_here = myel_here | (am & ~am_in)
-            am = am_in
         A_ax, A_my = int(am.sum()), int(myel_here.sum())
         g = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
         axon_mask[am] = a['id']
