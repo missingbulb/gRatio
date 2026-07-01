@@ -95,6 +95,52 @@ necessarily match the handwritten numbers. Extraction is pinned by
 determinism). The orange **omit** regions are detected and reported
 (`orange_px`) but not yet subtracted — that is the deferred step.
 
+## Validating raw-data segmentation against the ground truth
+
+The point of the hand masks is to **score a segmentation that runs on the raw
+grayscale micrographs** (`data/samples/sample_0X.png`), not on the annotations.
+Two steps:
+
+```
+python build_ground_truth.py        # register annotations onto the raw images
+python evaluate_segmentation.py     # segment raw data, score vs ground truth
+```
+
+1. **Register** (`gratio/gt_register.py`): the annotated crop is the same
+   micrograph scaled + padded, so multi-scale template matching recovers the
+   (scale, offset) that places the raw image inside the crop (match score
+   0.78–0.89). The extracted label masks are warped into native raw coordinates
+   and saved under `data/samples/masks/native/` with a `_gt_check.png` overlay.
+2. **Segment + score** (`gratio/evaluate.py`): run `gratio.segment` on the raw
+   image and compare to the registered ground truth — semantic IoU/Dice per
+   class and axon detection precision/recall. Writes a 3-panel
+   `[raw | prediction | ground truth]` figure per sample to `outputs/eval/`.
+
+### Baseline result (current `segment` defaults)
+
+| sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
+|------------|---------:|-----------:|----------:|:------------:|
+| sample_01  | 0.75 | 0.40 | 0.66 | 0.75 / 0.75 |
+| sample_02  | 0.75 | 0.56 | 0.93 | 1.00 / 1.00 |
+| sample_03  | 0.71 | 0.57 | 0.80 | 1.00 / 0.80 |
+| **mean**   | **0.74** | **0.51** | **0.80** | — |
+
+**Diagnosis:** axon and fibre overlap are decent; **myelin is the weak class**.
+The predicted axon border bulges outward into the myelin, so the axon is too big
+and the myelin band too thin (e.g. sample_02: 166k pred vs 235k gt myelin px) —
+the same effect that makes the area g-ratio read high.
+
+**Tuning tradeoff (measured via the harness):** raising `myelin_percentile`
+23→28 lifts myelin IoU 0.51→0.63, axon 0.74→0.83 and recall 0.85→1.00, but
+precision falls 0.89→0.77 (it starts inventing background "axons"). So the
+threshold alone trades false-negatives for false-positives; getting both right
+needs a better axon-vs-background discriminator, not just a knob. Defaults are
+left unchanged pending a decision on which way to optimise. (Note: sample_01's
+low myelin IoU is partly definitional — the hand-traced myelin there is very
+generous and still includes the orange omit regions.)
+
+The harness is pinned by `tests/test_evaluate.py`.
+
 ## Implications / next steps (not done here)
 
 1. **Inner-boundary refinement** — the axolemma is being drawn too far out into
