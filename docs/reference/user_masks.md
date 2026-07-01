@@ -58,6 +58,43 @@ issue flagged in the README, now with a concrete target: **0.70, not 0.81**.
 - Pipeline detects **4** (#1, #2, #4, #5) and **misses #3**, the thin elongated
   axon wedged between #2 and #5.
 
+## Algorithmic extraction of the purple/red areas
+
+`extract_masks.py` (module `gratio/mask_extract.py`) turns the hand annotations
+into clean, filled label masks, deterministically (same image → same masks):
+
+```
+python extract_masks.py            # runs all three, self-checks axon counts
+```
+
+How it works:
+
+1. **Colour gates (HSV)** split the ink: purple `H≈125–160`, red `H≤9 or ≥170`,
+   orange `H≈9–26` — thresholds picked from the ink hue histogram.
+2. **Axons** = filled closed purple loops. Shapes below 0.4 % of the image are
+   dropped, which discards the handwritten region numbers (also purple ink).
+3. **Fibres** = marker-controlled **watershed**: each axon is a seed, an
+   "outside" seed floods the extracellular space, and the red line is burned in
+   as a ridge. Each fibre is its axon's catchment, so fibres that share a myelin
+   wall split cleanly on the red centre-line — one fibre per axon, no leaks.
+4. **Myelin** = fibre minus axon.
+
+Outputs per image, in `outputs/masks/`:
+
+| file                    | contents                                        |
+|-------------------------|-------------------------------------------------|
+| `*_axon_labels.png`     | 16-bit label image, 0 = bg, 1..N per axon       |
+| `*_fiber_labels.png`    | 16-bit label image, fibre id == its axon id     |
+| `*_myelin_mask.png`     | 8-bit 0/255 myelin annulus                      |
+| `*_extract.png`         | side-by-side [annotated | extracted] for review |
+| `*_regions.csv`         | per-region area + centroid                      |
+
+Region **IDs are positional** (top-to-bottom, left-to-right) and do **not**
+necessarily match the handwritten numbers. Extraction is pinned by
+`tests/test_mask_extract.py` (counts 4/1/5, axon⊂fibre, non-empty myelin,
+determinism). The orange **omit** regions are detected and reported
+(`orange_px`) but not yet subtracted — that is the deferred step.
+
 ## Implications / next steps (not done here)
 
 1. **Inner-boundary refinement** — the axolemma is being drawn too far out into
