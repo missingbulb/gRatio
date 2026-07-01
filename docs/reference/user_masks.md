@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.87 | 0.57 | 0.81 | 1.00 / 1.00 |
-| sample_02  | 0.84 | 0.58 | 0.83 | 1.00 / 1.00 |
-| sample_03  | 0.86 | 0.72 | 0.95 | 1.00 / 1.00 |
-| **mean**   | **0.85** | **0.62** | **0.86** | **1.00 / 1.00** |
+| sample_01  | 0.89 | 0.56 | 0.78 | 1.00 / 1.00 |
+| sample_02  | 0.84 | 0.65 | 0.90 | 1.00 / 1.00 |
+| sample_03  | 0.88 | 0.76 | 0.96 | 1.00 / 1.00 |
+| **mean**   | **0.87** | **0.66** | **0.88** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -148,12 +148,29 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    separable by size — every true axon is ≥ 2× the area of the largest false
    pocket — so `min_axon_frac` (0.02) culls them while keeping every real axon.
 
+3. *Myelin over-reaching outward* (sample_02). A loose thickness cap
+   (`myelin_band=1.0` ≈ one axon radius ≈ 300 px here) let the band swallow dark
+   **extracellular** material abutting the myelin — a large false lobe. A
+   physiological cap (`myelin_band=0.5`) removes most of it: sample_02 myelin
+   0.58→0.65, fibre 0.83→0.90.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=30`, `myelin_band=1.0`, `min_axon_frac=0.02`; the size
-threshold is calibrated against this ground truth. sample_01's myelin IoU stays
-lowest, partly definitional — the hand-traced myelin there is very generous and
-still includes the orange omit regions. The harness and the perfect-recall /
-no-false-positive guarantees are pinned by `tests/test_evaluate.py`.
+`myelin_fill_percentile=34`, `myelin_band=0.5`, `min_axon_frac=0.02`; the size
+threshold is calibrated against this ground truth.
+
+**Known residual limits** (boundary-detection, not tunable by a knob):
+- sample_02's axon still runs ~20 % large: it grows out to the innermost *dark*
+  lamella, but the traced axolemma sits inside that, in the light periaxonal
+  collar — two bright regions intensity can't separate. This keeps the area
+  g-ratio a touch high (0.75 vs ~0.70 traced).
+- A small dark extracellular lobe can abut the myelin with no bright gap
+  between them; a radial cap that keeps genuinely thick myelin cannot fully
+  reject it.
+- sample_01's myelin IoU stays lowest, partly definitional — the hand-traced
+  myelin there is very generous and still includes the orange omit regions.
+
+The harness and the perfect-recall / no-false-positive guarantees are pinned by
+`tests/test_evaluate.py`.
 
 ## Implications / next steps (not done here)
 

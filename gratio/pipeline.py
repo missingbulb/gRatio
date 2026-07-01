@@ -57,7 +57,7 @@ from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc
 DEFAULTS = dict(
     bilateral=(9, 75, 75),    # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
     myelin_percentile=28,     # darkest X% of pixels treated as myelin (axon separation / detection)
-    myelin_fill_percentile=30,  # more inclusive % for the band + inner border (None -> = myelin_percentile)
+    myelin_fill_percentile=34,  # more inclusive % for the band + inner border (None -> = myelin_percentile)
     speckle_min=40,           # drop myelin connected components smaller than this (px)
     close_fiber=27,           # seal broken rings to isolate axon bodies
     myelin_close=11,          # close thin inter-lamellar gaps (keeps large gaps open)
@@ -67,7 +67,7 @@ DEFAULTS = dict(
     min_solidity=0.90,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
-    myelin_band=1.0,          # myelin thickness cap as a fraction of axon radius
+    myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
