@@ -74,6 +74,12 @@ DEFAULTS = dict(
                               # axoplasm vs dark myelin, peel the dark band inward from the fibre edge,
                               # and keep the bright core. This bias nudges the split darker so the border
                               # sits at the axolemma. Calibrated against the hand masks.
+    axon_smooth_frac=0.25,    # smooth the peeled axon border by this fraction of the axon radius, so it
+                              # is a clean rounded shape like a hand tracing (the peel itself is ragged)
+    axon_smooth_max=41,       # ...capped to this absolute kernel size
+    fiber_smooth_frac=0.2,    # smooth the fibre outer bound (open then close) by this fraction of the
+                              # axon radius, so it is a clean rounded envelope like a hand tracing
+                              # instead of a spiky outline that reaches into the extracellular space
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
 )
@@ -240,8 +246,19 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         terr = (nearest == a['id']) | (nearest == 0)   # Voronoi territory (split touching fibers)
         k = min(a['r'] * P['smooth_frac'], P['smooth_max_px'])
         fm = _smooth(binary_fill_holes(a['body'] | (assigned == a['id'])) & terr, k)
-        # refine the axon border to the real inner-myelin edge (per-fibre Otsu peel)
-        am = _peel_axon(gf, fm, a['cx'], a['cy'], P['axon_otsu_bias'], k)
+        # smooth the fibre outer bound into a clean rounded envelope: open removes
+        # spiky protrusions reaching into the extracellular space, close fills small
+        # indentations. (A hand tracing is smooth; the raw myelin outline is not.)
+        if P['fiber_smooth_frac'] > 0 and fm.any():
+            ks2 = int(max(3, P['fiber_smooth_frac'] * a['r'])) | 1
+            el2 = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ks2, ks2))
+            fm2 = cv2.morphologyEx(fm.astype(np.uint8), cv2.MORPH_OPEN, el2)
+            fm2 = cv2.morphologyEx(fm2, cv2.MORPH_CLOSE, el2)
+            fm = binary_fill_holes(fm2 > 0) & terr
+        # refine the axon border to the real inner-myelin edge (per-fibre Otsu peel),
+        # then smooth it into a clean rounded shape like a hand tracing
+        sk = min(P['axon_smooth_frac'] * a['r'], P['axon_smooth_max'])
+        am = _peel_axon(gf, fm, a['cx'], a['cy'], P['axon_otsu_bias'], sk)
         annulus = fm & ~am
         holes = annulus & ~myelin_mat
         hl, nh = cc_label(holes)
