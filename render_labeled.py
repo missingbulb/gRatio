@@ -77,7 +77,7 @@ def main():
     for raw_path in sorted(glob.glob(os.path.join(RAW_DIR, "sample_*.png"))):
         stem = os.path.splitext(os.path.basename(raw_path))[0]
         gray = cv2.imread(raw_path, cv2.IMREAD_GRAYSCALE)
-        seg = segment(gray)
+        seg = segment(gray, detect_bubbles=False)
         cur = _draw(gray, seg["axon_mask"], seg["fiber_mask"], seg["bubble"])
         panels = [_banner(cv2.cvtColor(gray, cv2.COLOR_GRAY2BGR), f"{stem} raw"),
                   _banner(cur, "CURRENT (axon=white line, fibre=colour line, bubbles=yellow)")]
