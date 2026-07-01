@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.91 | 0.58 | 0.78 | 1.00 / 1.00 |
+| sample_01  | 0.91 | 0.65 | 0.83 | 1.00 / 1.00 |
 | sample_02  | 0.96 | 0.81 | 0.91 | 1.00 / 1.00 |
 | sample_03  | 0.92 | 0.82 | 0.96 | 1.00 / 1.00 |
-| **mean**   | **0.93** | **0.74** | **0.88** | **1.00 / 1.00** |
+| **mean**   | **0.93** | **0.76** | **0.90** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 

@@ -68,7 +68,9 @@ DEFAULTS = dict(
     min_solidity=0.90,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
-    myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius
+    myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius...
+    myelin_band_floor=80,     # ...but at least this many px, so small axons with proportionally thick
+                              # myelin are not clipped (large axons already exceed it; scale-calibrated)
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     axon_otsu_bias=10,        # the axon border is refined per fibre: Otsu-split the fibre into bright
@@ -280,8 +282,8 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     r_by = np.zeros(len(cands) + 1)
     for a in cands:
         r_by[a['id']] = a['r']
-    assigned = np.where(myelin_keep & (nearest > 0) & (dist <= P['myelin_band'] * r_by[nearest]),
-                        nearest, 0)
+    band_cap = np.maximum(P['myelin_band'] * r_by[nearest], P['myelin_band_floor'])
+    assigned = np.where(myelin_keep & (nearest > 0) & (dist <= band_cap), nearest, 0)
 
     axon_mask = np.zeros((H, W), np.int32)
     myelin_mask = np.zeros((H, W), np.int32)
