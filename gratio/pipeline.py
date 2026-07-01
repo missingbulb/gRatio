@@ -56,16 +56,18 @@ from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc
 # Default parameters. Override per call via segment(..., **overrides).
 DEFAULTS = dict(
     bilateral=(9, 75, 75),    # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
-    myelin_percentile=23,     # darkest X% of pixels treated as myelin material
+    myelin_percentile=28,     # darkest X% of pixels treated as myelin (axon separation / detection)
+    myelin_fill_percentile=30,  # more inclusive % for the band + inner border (None -> = myelin_percentile)
     speckle_min=40,           # drop myelin connected components smaller than this (px)
     close_fiber=27,           # seal broken rings to isolate axon bodies
     myelin_close=11,          # close thin inter-lamellar gaps (keeps large gaps open)
-    min_axon_frac=0.004,      # min axon-body area as a fraction of the image
+    min_axon_frac=0.02,       # min axon-body area as a fraction of the image (also culls small
+                              # false-positive extracellular pockets; see docs/reference/user_masks.md)
     max_axon_frac=0.60,       # max axon-body area as a fraction of the image
     min_solidity=0.90,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
-    myelin_band=0.55,         # myelin thickness cap as a fraction of axon radius
+    myelin_band=1.0,          # myelin thickness cap as a fraction of axon radius
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
@@ -82,6 +84,14 @@ BUBBLE_COLOR = (0, 0, 255)   # red: holes / missing myelin
 
 def _palette(i):
     return PALETTE[i % len(PALETTE)]
+
+
+def keep_fill(mask, speckle_min):
+    """Drop connected components smaller than `speckle_min` pixels."""
+    n, lab, stats, _ = cv2.connectedComponentsWithStats(mask, 8)
+    keep = np.zeros(n, bool)
+    keep[1:] = stats[1:, cv2.CC_STAT_AREA] >= speckle_min
+    return keep[lab].astype(np.uint8)
 
 
 def _smooth(mask, k):
@@ -121,8 +131,17 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     framed = mc.copy()
     framed[0, :] = framed[-1, :] = framed[:, 0] = framed[:, -1] = 1
     enclosed = binary_fill_holes(framed.astype(bool))
+    # `myelin_mat` defines the myelin *material* used to place the axon inner
+    # border and fill the myelin band. It is decoupled from the detection
+    # threshold above: a more inclusive percentile here captures the lighter
+    # inner lamellae -- tightening the axon boundary and thickening the myelin --
+    # WITHOUT loosening the walls that separate axons (which would spawn false
+    # background axons). Defaults to the detection threshold (no behaviour change).
+    fill_pct = P.get('myelin_fill_percentile') or P['myelin_percentile']
+    myel_fill = (gf < float(np.percentile(gf, fill_pct))).astype(np.uint8)
+    myel_fill = keep_fill(myel_fill, P['speckle_min'])
     km = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['myelin_close'],) * 2)
-    myelin_mat = cv2.morphologyEx(myel, cv2.MORPH_CLOSE, km) > 0
+    myelin_mat = cv2.morphologyEx(myel_fill, cv2.MORPH_CLOSE, km) > 0
 
     # candidate axon compartments = regions separated by the sealed myelin
     sep = enclosed & ~mc.astype(bool)

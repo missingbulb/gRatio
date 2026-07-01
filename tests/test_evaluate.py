@@ -56,9 +56,9 @@ def test_registration_locks_on(evaluated, stem):
 def test_segmentation_overlaps_truth(evaluated, stem):
     sem = evaluated[stem][1]["semantic"]
     # the raw-data axon/fibre extraction meaningfully overlaps the hand masks
-    assert sem["axon"]["iou"] > 0.6
-    assert sem["fiber"]["iou"] > 0.6
-    assert sem["myelin"]["iou"] > 0.3   # myelin is the known weak class
+    assert sem["axon"]["iou"] > 0.75
+    assert sem["fiber"]["iou"] > 0.75
+    assert sem["myelin"]["iou"] > 0.45   # myelin is the known weak class
 
 
 def test_single_axon_is_detected_exactly(evaluated):
@@ -67,7 +67,15 @@ def test_single_axon_is_detected_exactly(evaluated):
     assert det["n_gt"] == 1 and det["tp"] == 1 and det["fp"] == 0
 
 
-def test_overall_recall(evaluated):
-    tp = sum(evaluated[s][1]["detection"]["tp"] for s in SAMPLES)
-    fn = sum(evaluated[s][1]["detection"]["fn"] for s in SAMPLES)
-    assert tp / (tp + fn) >= 0.75, "should recover most annotated axons"
+def test_every_axon_found(evaluated):
+    """Recall must be perfect: a missed axon merges its myelin into a neighbour,
+    corrupting that neighbour's measurement. False negatives are unacceptable."""
+    for s in SAMPLES:
+        det = evaluated[s][1]["detection"]
+        assert det["fn"] == 0, f"{s}: missed {det['fn']} axon(s)"
+
+
+def test_no_spurious_axons(evaluated):
+    """No false-positive axons either, so no phantom fibres are introduced."""
+    fp = sum(evaluated[s][1]["detection"]["fp"] for s in SAMPLES)
+    assert fp == 0

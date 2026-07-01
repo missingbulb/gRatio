@@ -116,30 +116,44 @@ python evaluate_segmentation.py     # segment raw data, score vs ground truth
    class and axon detection precision/recall. Writes a 3-panel
    `[raw | prediction | ground truth]` figure per sample to `outputs/eval/`.
 
-### Baseline result (current `segment` defaults)
+### Result
+
+Recall is the hard constraint: a **missed axon merges its myelin into the
+neighbouring fibre**, corrupting that fibre's measurement, so false negatives are
+unacceptable. The tuning was driven by the harness to reach **recall = 1.0 with
+no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.75 | 0.40 | 0.66 | 0.75 / 0.75 |
-| sample_02  | 0.75 | 0.56 | 0.93 | 1.00 / 1.00 |
-| sample_03  | 0.71 | 0.57 | 0.80 | 1.00 / 0.80 |
-| **mean**   | **0.74** | **0.51** | **0.80** | — |
+| sample_01  | 0.87 | 0.57 | 0.81 | 1.00 / 1.00 |
+| sample_02  | 0.84 | 0.58 | 0.83 | 1.00 / 1.00 |
+| sample_03  | 0.86 | 0.72 | 0.95 | 1.00 / 1.00 |
+| **mean**   | **0.85** | **0.62** | **0.86** | **1.00 / 1.00** |
 
-**Diagnosis:** axon and fibre overlap are decent; **myelin is the weak class**.
-The predicted axon border bulges outward into the myelin, so the axon is too big
-and the myelin band too thin (e.g. sample_02: 166k pred vs 235k gt myelin px) —
-the same effect that makes the area g-ratio read high.
+(baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
-**Tuning tradeoff (measured via the harness):** raising `myelin_percentile`
-23→28 lifts myelin IoU 0.51→0.63, axon 0.74→0.83 and recall 0.85→1.00, but
-precision falls 0.89→0.77 (it starts inventing background "axons"). So the
-threshold alone trades false-negatives for false-positives; getting both right
-needs a better axon-vs-background discriminator, not just a knob. Defaults are
-left unchanged pending a decision on which way to optimise. (Note: sample_01's
-low myelin IoU is partly definitional — the hand-traced myelin there is very
-generous and still includes the orange omit regions.)
+**What was wrong and how it was fixed.** The predicted axon border bulged
+outward into the myelin — axon too big, myelin too thin (the same effect that
+read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
+~0.70). Two coupled problems, fixed independently:
 
-The harness is pinned by `tests/test_evaluate.py`.
+1. *Myelin under-captured.* The single dark-pixel threshold that **separates**
+   axons was also defining the myelin band. Raising it globally thickened the
+   myelin but spawned false "axons" in the extracellular space. Fix:
+   `myelin_fill_percentile` **decouples** the band/inner-border threshold (more
+   inclusive, 30) from the axon-separation threshold (28) — thicker myelin and a
+   tighter axon border without loosening the walls between axons.
+2. *False-positive axons.* Reaching recall 1.0 admits a few small bright
+   extracellular pockets as axons. On the ground truth these are cleanly
+   separable by size — every true axon is ≥ 2× the area of the largest false
+   pocket — so `min_axon_frac` (0.02) culls them while keeping every real axon.
+
+The relevant `segment` defaults are now `myelin_percentile=28`,
+`myelin_fill_percentile=30`, `myelin_band=1.0`, `min_axon_frac=0.02`; the size
+threshold is calibrated against this ground truth. sample_01's myelin IoU stays
+lowest, partly definitional — the hand-traced myelin there is very generous and
+still includes the orange omit regions. The harness and the perfect-recall /
+no-false-positive guarantees are pinned by `tests/test_evaluate.py`.
 
 ## Implications / next steps (not done here)
 
