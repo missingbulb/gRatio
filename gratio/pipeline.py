@@ -89,6 +89,8 @@ DEFAULTS = dict(
     border_min_radius=6.0,    # ...but do not refit a region whose equivalent radius is below this (px)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
+    detect_bubbles=True,      # if False, bright gaps stay part of the myelin band (bubble
+                              # detection deferred to a later stage; nothing highlighted)
 )
 
 # Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
@@ -354,10 +356,11 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         # bright periaxonal ring hugging the axon is myelin, not a bubble.
         axon_ring = cv2.dilate(am.astype(np.uint8),
                                np.ones((5, 5), np.uint8)).astype(bool) & ~am
-        for h in range(1, nh + 1):
-            hm = hl == h
-            if hm.sum() >= bmin and not (hm & axon_ring).any():
-                gap |= hm
+        if P['detect_bubbles']:
+            for h in range(1, nh + 1):
+                hm = hl == h
+                if hm.sum() >= bmin and not (hm & axon_ring).any():
+                    gap |= hm
         myel_here = annulus & ~gap
         A_ax, A_my = int(am.sum()), int(myel_here.sum())
         g = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
