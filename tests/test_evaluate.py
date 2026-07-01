@@ -79,3 +79,21 @@ def test_no_spurious_axons(evaluated):
     """No false-positive axons either, so no phantom fibres are introduced."""
     fp = sum(evaluated[s][1]["detection"]["fp"] for s in SAMPLES)
     assert fp == 0
+
+
+def test_scalebar_detection_and_safety():
+    """Scale bars are found; removal only fires on clean background and never
+    costs an axon (correctness outranks the cosmetic clean-up)."""
+    from gratio.pipeline import _find_scalebar, _remove_scalebar
+    from gratio import segment
+    s1 = cv2.imread(os.path.join(RAW, "sample_01.png"), cv2.IMREAD_GRAYSCALE)
+    s2 = cv2.imread(os.path.join(RAW, "sample_02.png"), cv2.IMREAD_GRAYSCALE)
+    s3 = cv2.imread(os.path.join(RAW, "sample_03.png"), cv2.IMREAD_GRAYSCALE)
+    assert _find_scalebar(s1) is not None and _find_scalebar(s2) is not None
+    assert _find_scalebar(s3) is None
+    # sample_01's bar overlaps axon #4 -> gated OFF (image unchanged, axon kept)
+    assert np.array_equal(_remove_scalebar(s1), s1)
+    assert len(segment(s1)["axons"]) == 4
+    # sample_02's bar is in clean background -> removed, axon still found
+    assert not np.array_equal(_remove_scalebar(s2), s2)
+    assert len(segment(s2)["axons"]) == 1

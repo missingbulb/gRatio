@@ -55,6 +55,7 @@ from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc
 
 # Default parameters. Override per call via segment(..., **overrides).
 DEFAULTS = dict(
+    remove_scalebar=True,     # detect & inpaint a burn-in scale-bar ruler + label before segmenting
     bilateral=(9, 75, 75),    # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
     myelin_percentile=28,     # darkest X% of pixels treated as myelin (axon separation / detection)
     myelin_fill_percentile=34,  # more inclusive % for the band + inner border (None -> = myelin_percentile)
@@ -94,6 +95,49 @@ BUBBLE_COLOR = (0, 0, 255)   # red: holes / missing myelin
 
 def _palette(i):
     return PALETTE[i % len(PALETTE)]
+
+
+def _find_scalebar(gray):
+    """Locate a burn-in scale-bar ruler: a long, thin, horizontal high-contrast
+    line in the lower part of the image (bright or dark vs its local background).
+    Returns (x, y, w, h) or None."""
+    H, W = gray.shape
+    bg = cv2.GaussianBlur(gray, (0, 0), 9)
+    m = (cv2.subtract(gray, bg) > 18).astype(np.uint8)   # bright over local background
+    horiz = cv2.morphologyEx(m, cv2.MORPH_OPEN,
+                             cv2.getStructuringElement(cv2.MORPH_RECT, (25, 1)))
+    n, _, stats, _ = cv2.connectedComponentsWithStats(horiz, 8)
+    best = None
+    for i in range(1, n):
+        x, y, w, h, _ = stats[i]
+        # a ruler is short (not the full-width image border), thin, horizontal,
+        # in the lower band but not on the very edge row
+        if (50 <= w <= 0.45 * W and w >= 5 * max(h, 1)
+                and H * 0.6 < y < H - 8):
+            if best is None or w > best[2]:
+                best = (x, y, w, h)
+    return best
+
+
+def _remove_scalebar(gray):
+    """Inpaint the scale-bar ruler + its label so they do not confuse
+    segmentation (the label text sits just above/below the ruler)."""
+    b = _find_scalebar(gray)
+    if b is None:
+        return gray
+    x, y, w, h = b
+    H, W = gray.shape
+    y0, y1 = max(0, y - 28), min(H, y + h + 40)
+    x0, x1 = max(0, x - 15), min(W, x + w + 15)
+    # only inpaint a scale bar that sits in clean (bright) background; if it lies on
+    # tissue (dark myelin present in the band) removing it would damage a real axon,
+    # so leave it -- correctness of the segmentation outranks a cosmetic clean-up.
+    band = gray[y0:y1, x0:x1]
+    if (band < np.percentile(gray, 35)).mean() > 0.12:
+        return gray
+    mask = np.zeros((H, W), np.uint8)
+    mask[y0:y1, x0:x1] = 255
+    return cv2.inpaint(gray, mask, 3, cv2.INPAINT_TELEA)
 
 
 def keep_fill(mask, speckle_min):
@@ -154,6 +198,8 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     P = {**DEFAULTS, **overrides}
     if gray.ndim != 2:
         gray = cv2.cvtColor(gray, cv2.COLOR_BGR2GRAY)
+    if P['remove_scalebar']:
+        gray = _remove_scalebar(gray)
     H, W = gray.shape
 
     gf = cv2.bilateralFilter(gray, *P['bilateral'])
