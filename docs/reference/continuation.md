@@ -10,8 +10,8 @@ Current agreement (`evaluate_segmentation.py`, means over the 3 TEM samples):
 | metric | value |
 |--------|-------|
 | axon IoU   | 0.93 |
-| myelin IoU | 0.83 |
-| fibre IoU  | 0.94 |
+| myelin IoU | 0.85 |
+| fibre IoU  | 0.95 |
 | detection precision / recall | **1.00 / 1.00** |
 
 (Baseline before any tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
@@ -40,8 +40,9 @@ Diagnostics used during tuning (kept for reference):
 3. **axon detection**: compartments passing area/solidity/brightness (`min_axon_frac` etc.).
 4. **myelin assignment**: dark material touching an axon, capped at `myelin_thickness_mult` × the axon's own measured ring thickness (median distance-to-axon of its dark material); shared bands split by nearest axon.
 5. **inner border** refined per fibre by an Otsu **peel** (`axon_otsu_bias`) + smoothing (`axon_smooth_frac`).
-6. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
-7. **final border refit** as least-squares smooth curves (`border_smooth_tol`, `border_min_radius`).
+6. **dense-dark extension** (`dense_extend`, A-MYELIN-DENSE) follows the solid dark sheath outward past the cap where it ends in neuropil; **junction fill** (`junction_fill`, A-JUNCTION-MYELIN) reclaims dense-dark myelin trapped between two clustered fibres (a strict no-op for isolated fibres).
+7. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
+8. **final border refit** as least-squares smooth curves (`border_smooth_tol`/`border_smooth_tol_fiber`, `border_min_radius`).
 
 ## The parameters that were tuned against the masks (why they exist)
 

@@ -144,6 +144,12 @@ DEFAULTS = dict(
     dense_extend_smooth=6,    # half-width (rays) of the angular-median window that smooths the
                               # extension into a clean envelope (no per-ray comb) -- an extension
                               # survives only where a broad arc of rays agrees
+    junction_fill=True,       # reclaim dense-dark myelin trapped in the interstitial junctions
+                              # BETWEEN clustered fibres (beyond every axon's cap, so left
+                              # unassigned). Relies on A-JUNCTION-MYELIN. See _fill_junction_myelin.
+    junction_fill_kfrac=3.0,  # bridge inter-fibre gaps up to this multiple of the median fibre
+                              # myelin thickness (scale-free); only pixels flanked by TWO fibres and
+                              # actually dense-dark are added, so isolated fibres are untouched
     membrane_outer_boundary=False,  # OPT-IN: trim outer over-reach past the outermost myelin
                               # lamella (ridge-guided flood). OFF by default -- relies on the
                               # biological A-MYELIN-LAMELLAR assumption (concentric resolvable
@@ -423,6 +429,48 @@ def _extend_dense_dark(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
     return axon_mask, myelin_mask, fiber_mask
 
 
+def _fill_junction_myelin(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
+    """Reclaim dense-dark myelin trapped in the junctions BETWEEN clustered fibres.
+
+    # BIOLOGICAL ASSUMPTION [A-JUNCTION-MYELIN] -- see docs/reference/assumptions.md:
+    # where several myelinated fibres pack together, the dark material filling the
+    # interstitial pocket between two adjacent sheaths IS myelin (their touching
+    # compact-myelin walls), not some other dark structure. That pocket sits beyond
+    # every axon's own thickness cap (it is far from all axon centres), so the capped
+    # assignment leaves it unclaimed -- a persistent under-reach in tight clusters.
+    # Bridge the inter-fibre gaps by CLOSING the fibre union with a scale-free kernel
+    # (a multiple of the median fibre thickness), then add back only pixels that are
+    # (a) actually dense-dark and (b) flanked by a SECOND fibre within the kernel --
+    # so open extracellular neuropil (no fibre on the far side to bridge to) is never
+    # filled and a genuinely isolated fibre gets nothing. Fails if a dark non-myelin
+    # process runs through the junction, or if two fibres are pressed so close that the
+    # gate admits a sliver of the neuropil between them.
+    """
+    ids = [a['id'] for a in axons]
+    if len(ids) < 2:
+        return axon_mask, myelin_mask, fiber_mask         # no junction without >=2 fibres
+    H, W = dense.shape
+    dist_by = {i: distance_transform_edt(fiber_mask != i) for i in ids}
+    ths = []
+    for a in axons:
+        am = axon_mask == a['id']
+        mm = (fiber_mask == a['id']) & ~am
+        if mm.any():
+            ths.append(float(np.median(distance_transform_edt(~am)[mm])))
+    th = float(np.median(ths)) if ths else 10.0
+    k = max(3, int(round(P['junction_fill_kfrac'] * th)) | 1)
+    ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    closed = cv2.morphologyEx((fiber_mask > 0).astype(np.uint8), cv2.MORPH_CLOSE, ker) > 0
+    dstack = np.stack([dist_by[i] for i in ids], 0)
+    order = np.argsort(dstack, 0)
+    nearest = np.array(ids)[order[0]]
+    d2 = np.take_along_axis(dstack, order[1:2], 0)[0]     # distance to the 2nd-nearest fibre
+    added = closed & dense & (fiber_mask == 0) & (d2 <= k)
+    fiber_mask = np.where(added, nearest, fiber_mask)
+    myelin_mask = np.where(added & (axon_mask == 0), nearest, myelin_mask)
+    return axon_mask, myelin_mask, fiber_mask
+
+
 def _fill_edge_holes(fm, margin=40):
     """Fill vacuoles that are enclosed by the fibre except where the IMAGE EDGE
     cuts through them. ``binary_fill_holes`` cannot close a hole that touches the
@@ -661,6 +709,20 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         dark = (gf < float(np.percentile(gf, fill_pct))).astype(np.float32)
         dense = cv2.boxFilter(dark, -1, (int(P['dense_extend_win']),) * 2) > P['dense_extend_thr']
         axon_mask, myelin_mask, fiber_mask = _extend_dense_dark(
+            axon_mask, myelin_mask, fiber_mask, dense, axons, P)
+        myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
+
+    # Reclaim dense-dark myelin trapped in the junctions between clustered fibres
+    # (unassigned because it lies beyond every axon's cap). A-JUNCTION-MYELIN.
+    if P['junction_fill'] and len(axons) > 1:
+        dark = (gf < float(np.percentile(gf, fill_pct))).astype(np.float32)
+        dense = cv2.boxFilter(dark, -1, (int(P['dense_extend_win']),) * 2) > P['dense_extend_thr']
+        axon_mask, myelin_mask, fiber_mask = _fill_junction_myelin(
             axon_mask, myelin_mask, fiber_mask, dense, axons, P)
         myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
         for a in axons:

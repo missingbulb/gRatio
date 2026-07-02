@@ -320,10 +320,44 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     concentric ridge — is the proposed next step for the residual open-side
     over/under-reach (below).
 
+12. *Follow the dark sheath; reclaim junction myelin* (R27–R30). Two complementary
+    rules built on **A-MYELIN-DENSE** (myelin is solidly dark, neuropil only
+    sparsely). *Dense-dark extension* (`dense_extend`, R27–R28) follows each fibre's
+    solid dark outward past the median cap where the density drops to neuropil,
+    filling the result as a smooth radial **envelope** (not per-ray lines, which had
+    left a comb of 'orange spikes'). *Junction fill* (`junction_fill`, R30, **A-JUNCTION-MYELIN**)
+    reclaims the dense-dark myelin trapped in the interstitial pockets *between*
+    clustered fibres — material that sits beyond every axon's cap and so was left
+    unassigned (the blue 'missed' wedges in sample_03's junctions). It closes the
+    inter-fibre gaps with a scale-free kernel (`junction_fill_kfrac` × median fibre
+    thickness) and adds back only pixels that are dense-dark **and flanked by a
+    second fibre** — so open neuropil is never bridged and a lone fibre gets nothing
+    (sample_02 is byte-for-byte unchanged). Gain: sample_03 myelin 0.817 → 0.822,
+    sample_01 0.875 → 0.877, fibre 0.947 → 0.948; sample_02 preserved.
+
+    *sample_02 top over-reach — closed as a genuine wall (R30).* The owner's idea —
+    detect the neighbouring fibre's (edge-cropped, undetected) bright axoplasm and
+    split the shared dark wall between them — was prototyped two ways (equidistant
+    midline; thickness-weighted midline) and **both cut far inside the true border**.
+    The reason, made visual in `scratchpad/s02_boundary.png`: the neighbours surround
+    sample_02 closely on *all* sides while its own myelin is genuinely thick, so any
+    midline (even thickness-weighted) falls inside GT everywhere except the one spot
+    we over-reach. Confirmed independently by a cap sweep (`s02_capsweep.py`): a
+    tighter isotropic cap trades top over-reach for side under-reach with **no clean
+    optimum** (FP 29k→11k only as FN 11k→60k), because one median-thickness cap
+    cannot fit a sheath whose true thickness *varies* around the perimeter (thin
+    where it shares the top wall, thick on the sides). The over-reach pixels are
+    texturally identical to real myelin — they *are* the neighbour's myelin — so no
+    density/ridge/orientation signal separates them (six were tested, all identical).
+    This is a shared-wall ambiguity, not a tuning gap; it needs either more samples
+    (to learn a shape prior) or the hand-drawn inter-cell line. Documented under
+    A-MYELIN-DENSE's failure mode.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
 `myelin_thickness_mult_isolated=1.8`, `isolation_ramp=(7,13)`,
-`fiber_vacuole_close_frac=1.0`, `detect_bubbles=False`, `fill_edge_holes=True`,
+`fiber_vacuole_close_frac=1.0`, `dense_extend=True`, `junction_fill=True`
+(`junction_fill_kfrac=3.0`), `detect_bubbles=False`, `fill_edge_holes=True`,
 `min_axon_frac=0.02`; territory is thickness-weighted and every outer-myelin rule
 scales with each axon's own measured thickness (no pixel constant, no
 axon-radius/g-ratio prior). The only cap value calibrated on a single isolated
