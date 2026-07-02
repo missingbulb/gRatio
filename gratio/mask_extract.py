@@ -1,11 +1,25 @@
-"""Extract the hand-drawn purple (axon) and red (myelin-outer) areas from the
-user-annotated micrographs into clean, filled label masks.
+"""Extract the hand-drawn annotations from the user micrographs into clean,
+filled label masks. Two annotation schemes are supported and auto-detected:
 
-The annotations use a fixed colour convention (see docs/reference/user_masks.md):
+**red-boundary scheme** (samples 1-2)::
 
     purple  -> axon boundary   (interior = the axon area)
     red     -> myelin outer boundary (interior = the whole fibre area)
     orange  -> regions to omit  (detected and reported, not yet used)
+
+Fibres are the marker-controlled watershed of the axons with the red line burned
+in as a ridge.
+
+**per-neuron-fill scheme** (sample 3, no red)::
+
+    purple loop        -> axon boundary (inner)
+    translucent fill   -> that neuron's myelin; the fill's OUTER edge is the
+                          myelin outer boundary. Each neuron gets a distinct hue.
+
+Here the myelin comes straight from the colour the user painted, so no red outer
+line is needed. The pen loops are ~fully saturated while the fills are
+translucent (S ~ 90-110), so a saturation cut separates the axon loops from the
+fills. See docs/reference/gt_from_masks.md for the full procedure.
 
 The handwritten region numbers are drawn in the *same* purple ink as the axon
 loops, so we never count purple pixels directly -- we fill closed purple loops
@@ -17,6 +31,7 @@ from dataclasses import dataclass, field
 
 import cv2
 import numpy as np
+from scipy import ndimage as ndi
 
 # --- colour gates (HSV, OpenCV ranges: H 0-179, S/V 0-255) -------------------
 # Tuned from the hue histogram of the annotated crops:
@@ -27,6 +42,13 @@ RED_HUE_HI = (170, 180)   # ...and high side
 ORANGE_HUE = (9, 26)
 MIN_SAT = 60              # ink is saturated; grayscale EM is not
 MIN_VAL = 60
+
+# per-neuron-fill scheme: the pen lines are ~fully saturated, the translucent
+# colour fills sit lower (S ~ 90-110), so these cuts split the two.
+PURPLE_LINE_MIN_SAT = 150   # isolate the axon pen loop from any bluish fill
+RED_LINE_MIN_SAT = 150      # a real red outer-boundary line (fills stay below)
+FILL_SAT = (45, 165)        # translucent per-neuron myelin fill
+FILL_HUE_TOL = 12           # circular hue window when growing one neuron's fill
 
 # a region must be at least this fraction of the image to count as an axon/fibre
 # (drops handwritten digits and stray ink specks)
@@ -58,6 +80,20 @@ def _color_masks(bgr):
     red = _ink_mask(hsv, RED_HUE_LO) | _ink_mask(hsv, RED_HUE_HI)
     orange = _ink_mask(hsv, ORANGE_HUE)
     return purple, red, orange
+
+
+def _red_line_mask(hsv):
+    """The saturated red *outer-boundary line* (not the translucent coral fill)."""
+    H, S = hsv[..., 0], hsv[..., 1]
+    hue = ((H <= RED_HUE_LO[1]) | (H >= RED_HUE_HI[0]))
+    return (hue & (S >= RED_LINE_MIN_SAT)).astype(np.uint8) * 255
+
+
+def _purple_line_mask(hsv):
+    """The saturated purple axon pen loop, excluding translucent bluish fills."""
+    H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    return ((H >= PURPLE_HUE[0]) & (H <= PURPLE_HUE[1]) &
+            (S >= PURPLE_LINE_MIN_SAT) & (V >= MIN_VAL)).astype(np.uint8) * 255
 
 
 def _fill_closed_loops(ink, min_area, close_k=9):
@@ -142,13 +178,10 @@ def _relabel_reading_order(labels, regions):
     return out, regions
 
 
-def extract(bgr, stem=""):
-    """Run the full extraction on one annotated BGR image."""
-    h, w = bgr.shape[:2]
-    min_area = MIN_REGION_FRAC * h * w
-    purple, red, orange = _color_masks(bgr)
-
-    axon_fill = _fill_closed_loops(purple, min_area)
+def _axons_from_loops(loop_ink, min_area, shape):
+    """Fill closed purple loops -> axon label image + reading-order region list."""
+    h, w = shape
+    axon_fill = _fill_closed_loops(loop_ink, min_area)
     an, alab, astats, acent = cv2.connectedComponentsWithStats(axon_fill, 8)
     axon_labels = np.zeros((h, w), np.int32)
     axons = []
@@ -160,9 +193,82 @@ def extract(bgr, stem=""):
         axon_labels[alab == i] = aid
         axons.append({"id": aid, "area_px": int(astats[i, cv2.CC_STAT_AREA]),
                       "cx": float(acent[i][0]), "cy": float(acent[i][1])})
+    return _relabel_reading_order(axon_labels, axons)
 
-    axon_labels, axons = _relabel_reading_order(axon_labels, axons)
-    fiber_labels, fibers = _fibers_by_watershed(bgr, red, axon_labels, axons)
+
+def _myelin_by_fill(hsv, axon_labels, axons):
+    """Per-neuron myelin from the translucent colour fills.
+
+    Each axon's fill is identified by the dominant hue seen in a ring just
+    outside its loop, then grown to the connected fill of that hue touching the
+    ring. Distinct hues keep neighbouring fills from bleeding into one another,
+    so there is no need for a red line to split shared walls.
+    """
+    h, w = axon_labels.shape
+    H, S = hsv[..., 0].astype(int), hsv[..., 1]
+    purple = _purple_line_mask(hsv) > 0
+    red_line = _red_line_mask(hsv) > 0
+    fill = ((S >= FILL_SAT[0]) & (S < FILL_SAT[1]) & ~purple & ~red_line &
+            (axon_labels == 0))
+    fill = cv2.morphologyEx(fill.astype(np.uint8) * 255, cv2.MORPH_OPEN,
+                            np.ones((3, 3), np.uint8)) > 0
+
+    myelin_labels = np.zeros((h, w), np.int32)
+    ring_k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (31, 31))
+    for a in axons:
+        ai = (axon_labels == a["id"]).astype(np.uint8)
+        dil = cv2.dilate(ai, ring_k) > 0
+        ring = dil & fill
+        if ring.sum() < 50:
+            continue
+        hue = int(np.median(H[ring]))
+        d = np.abs(H - hue)
+        d = np.minimum(d, 180 - d)
+        colmask = fill & (d <= FILL_HUE_TOL)
+        lab, _ = ndi.label(colmask)
+        touch = set(np.unique(lab[dil])) - {0}
+        band = np.isin(lab, list(touch))
+        myelin_labels[band & (myelin_labels == 0)] = a["id"]
+    return myelin_labels
+
+
+def _fibers_from_fill(axon_labels, myelin_labels, axons, close_k=15):
+    """Fibre = axon + its myelin fill, closed and hole-filled per neuron."""
+    h, w = axon_labels.shape
+    k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_k, close_k))
+    fiber_labels = np.zeros((h, w), np.int32)
+    fibers = []
+    for a in axons:
+        reg = (axon_labels == a["id"]) | (myelin_labels == a["id"])
+        reg = cv2.morphologyEx(reg.astype(np.uint8) * 255, cv2.MORPH_CLOSE, k) > 0
+        reg = ndi.binary_fill_holes(reg)
+        fiber_labels[reg] = a["id"]
+        ys, xs = np.nonzero(reg)
+        fibers.append({"id": a["id"], "area_px": int(reg.sum()),
+                       "cx": float(xs.mean()), "cy": float(ys.mean())})
+    return fiber_labels, fibers
+
+
+def extract(bgr, stem=""):
+    """Run the full extraction on one annotated BGR image.
+
+    Auto-detects the scheme: a saturated red outer-boundary line -> red-watershed
+    fibres; no red line -> per-neuron colour fills define the myelin.
+    """
+    h, w = bgr.shape[:2]
+    min_area = MIN_REGION_FRAC * h * w
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    purple, red, orange = _color_masks(bgr)
+
+    if int((_red_line_mask(hsv) > 0).sum()) >= min_area:
+        # red-boundary scheme (samples 1-2)
+        axon_labels, axons = _axons_from_loops(purple, min_area, (h, w))
+        fiber_labels, fibers = _fibers_by_watershed(bgr, red, axon_labels, axons)
+    else:
+        # per-neuron-fill scheme (sample 3): purple loop = axon, fill = myelin
+        axon_labels, axons = _axons_from_loops(_purple_line_mask(hsv), min_area, (h, w))
+        myelin_labels = _myelin_by_fill(hsv, axon_labels, axons)
+        fiber_labels, fibers = _fibers_from_fill(axon_labels, myelin_labels, axons)
 
     myelin = np.where((fiber_labels > 0) & (axon_labels == 0), 255, 0).astype(np.uint8)
 
