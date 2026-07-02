@@ -125,10 +125,12 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.91 | 0.87 | 0.96 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.84 | 0.93 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
-| **mean**   | **0.93** | **0.85** | **0.95** | **1.00 / 1.00** |
+| sample_01  | 0.92 | 0.88 | 0.96 | 1.00 / 1.00 |
+| sample_02  | 0.96 | 0.88 | 0.96 | 1.00 / 1.00 |
+| sample_03  | 0.94 | 0.83 | 0.95 | 1.00 / 1.00 |
+| **mean**   | **0.94** | **0.87** | **0.96** | **1.00 / 1.00** |
+
+(values after R31; before it, mean was axon 0.93 / myelin 0.85 / fibre 0.95.)
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -353,15 +355,58 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     (to learn a shape prior) or the hand-drawn inter-cell line. Documented under
     A-MYELIN-DENSE's failure mode.
 
+13. *Three Pareto-safe recalibrations after the sample_03 GT update* (R31). With
+    the refreshed sample_03 ground truth in place, a full re-sweep of the boundary
+    parameters found three changes that raise agreement on **every** sample at once
+    (no inter-sample trade, recall/precision still 1.00/1.00), attacking the two
+    largest error components a per-fibre decomposition surfaced — sample_02's outer
+    over-reach and the inner-border rounding:
+    - `myelin_thickness_mult_isolated` **1.8 → 1.4**. This is the isolated-fibre
+      outer cap and, on this 3-image set, only sample_02 is isolated, so it is
+      effectively the sample_02 outer-boundary knob. 1.4 is the *measured elbow*:
+      it removes the maximal outer over-reach (sample_02 myelin FP 39.7k → 27.2k)
+      while the under-reach stays **at/below baseline** (FN 3.69k → 3.62k) — i.e.
+      pure over-reach removal, no clipping of genuine myelin (below 1.4 the FN
+      climbs as real sheath starts being cut). sample_02 myelin 0.842 → 0.883,
+      fibre 0.93 → 0.96. The earlier capsweep (R30) that found "no clean optimum"
+      predated `dense_extend`, which now re-recovers any genuinely thick sheath the
+      tighter cap clips, so the trade is gone. Still the weakest-supported constant
+      (one isolated axon) — see A-ISOLATED-TIGHTER.
+    - `axon_smooth_frac` **0.6 → 0.8**. More morphological rounding of the peeled
+      inner border removes its residual per-fibre wobble (sample_01 axon-side myelin
+      FP 11.2k → 9.8k). 0.9+ over-rounds sample_03's elongated tadpole axons (their
+      narrow width is not captured by the equivalent radius used to size the
+      kernel), so 0.8 is the ceiling for a *uniform* kernel; a width-aware kernel is
+      the way past it but was not needed for a gain here.
+    - `border_smooth_tol` **2.0 → 1.0** (the INNER/axon spline refit). At 2.0 the
+      final spline rounded off the genuinely non-circular axons — most visibly
+      sample_03's oval/tadpole bodies — reading their border in past GT. 1.0 gives
+      enough control points to track the real shape without re-introducing the
+      raster staircase (sample_03 axon IoU 0.934 → 0.944). It plateaus below ~0.7
+      and stays ≥ the outer tol (`border_smooth_tol_fiber`=0.5), consistent with the
+      compact axon needing fewer curves than the long, undulating fibre outline.
+
+    Net over the three: mean **axon 0.937 → 0.943, myelin 0.847 → 0.866, fibre
+    0.947 → 0.955**; every per-sample class IoU is same-or-higher. What was *not*
+    changed, deliberately: `dense_extend_thr`, `myelin_thickness_mult`, and
+    `junction_fill_kfrac` each showed a ≤0.002 mean gain that came from an
+    inter-sample trade (helping one sample by hurting another) — left at their
+    tuned values to avoid the single-sample overfitting the owner directives forbid.
+    The residual outer-boundary walls (sample_02 shared wall, sample_03 open-side
+    cluster-edge over-reach) are unchanged: they are dense-dark (82–94% of the
+    over-reach), so no local density/ridge signal separates them — the documented
+    learned-outer-boundary route still stands.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
-`myelin_thickness_mult_isolated=1.8`, `isolation_ramp=(7,13)`,
-`fiber_vacuole_close_frac=1.0`, `dense_extend=True`, `junction_fill=True`
-(`junction_fill_kfrac=3.0`), `detect_bubbles=False`, `fill_edge_holes=True`,
-`min_axon_frac=0.02`; territory is thickness-weighted and every outer-myelin rule
-scales with each axon's own measured thickness (no pixel constant, no
-axon-radius/g-ratio prior). The only cap value calibrated on a single isolated
-example (`myelin_thickness_mult_isolated`) is documented as such.
+`myelin_thickness_mult_isolated=1.4`, `isolation_ramp=(7,13)`,
+`axon_smooth_frac=0.8`, `border_smooth_tol=1.0`, `fiber_vacuole_close_frac=1.0`,
+`dense_extend=True`, `junction_fill=True` (`junction_fill_kfrac=3.0`),
+`detect_bubbles=False`, `fill_edge_holes=True`, `min_axon_frac=0.02`; territory is
+thickness-weighted and every outer-myelin rule scales with each axon's own measured
+thickness (no pixel constant, no axon-radius/g-ratio prior). The only cap value
+calibrated on a single isolated example (`myelin_thickness_mult_isolated`) is
+documented as such.
 
 **Residual, needing a per-side (not global) outer boundary:**
 - On an *open* extracellular-facing arc a fibre can over-reach (sample_03 #2,

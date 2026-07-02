@@ -61,9 +61,9 @@ python -m pytest -q                                # synthetic + GT + evaluation
 | `sample_02.png` | 871×844 | single healthy axon, thick concentric myelin (the clean parity case). |
 | `sample_03.png` | 482×505 | 5-axon touching cluster, thin myelin. |
 
-Current pipeline g-ratios: s01 ≈ 0.66/0.63/0.58/0.73, s02 ≈ 0.68, s03 ≈
-0.68/0.82/0.72/0.65/0.84. Segmentation vs GT means ≈ axon 0.93 / myelin 0.85 /
-fibre 0.95, detection 1.00/1.00.
+Current pipeline g-ratios (axon-id order): s01 ≈ 0.67/0.63/0.58/0.75, s02 ≈ 0.69,
+s03 ≈ 0.82/0.68/0.72/0.85/0.65. Segmentation vs GT means ≈ axon 0.94 / myelin 0.87 /
+fibre 0.96, detection 1.00/1.00 (means after R31; see user_masks.md).
 
 ## Ground truth — how it works (READ before touching it)
 

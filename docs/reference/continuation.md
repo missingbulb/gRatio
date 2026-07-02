@@ -9,10 +9,13 @@ Current agreement (`evaluate_segmentation.py`, means over the 3 TEM samples):
 
 | metric | value |
 |--------|-------|
-| axon IoU   | 0.93 |
-| myelin IoU | 0.85 |
-| fibre IoU  | 0.95 |
+| axon IoU   | 0.94 |
+| myelin IoU | 0.87 |
+| fibre IoU  | 0.96 |
 | detection precision / recall | **1.00 / 1.00** |
+
+(after R31 — the boundary re-sweep against the updated sample_03 GT; before it,
+axon 0.93 / myelin 0.85 / fibre 0.95.)
 
 (Baseline before any tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 Per-sample numbers and the full narrative are in `user_masks.md`; the durable
@@ -53,12 +56,12 @@ Per-sample error maps + the sample_02 "why geometry can't win" evidence:
 |-------|-------|-----------------------|
 | `myelin_percentile` / `myelin_fill_percentile` | 28 / 42 | decouple axon-separation threshold from the myelin-band threshold; the fill % is raised to capture lighter lamellae (~20-33% of GT myelin is brighter than the separation %) without spawning false axons — R10/R11/**R21** |
 | `min_axon_frac` | 0.02 | size floor that culls false-positive background pockets while keeping every real axon — R11 |
-| `myelin_thickness_mult` (+`_isolated`) | 3.0 / 1.8 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant), independent of axon radius (no g-ratio circularity). Isolated axons ramp to the tighter 1.8 (`isolation_ramp`) — R20/R21/**R22/R24** |
+| `myelin_thickness_mult` (+`_isolated`) | 3.0 / 1.4 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant), independent of axon radius (no g-ratio circularity). Isolated axons ramp to the tighter 1.4 (`isolation_ramp`); 1.4 is the measured elbow — max over-reach removed with under-reach still at baseline — R20/R21/R22/R24/**R31** |
 | `fiber_vacuole_close_frac` | 1.0 | wrap the fibre outer boundary over edge vacuoles by closing it with a kernel = this × the axon's own band thickness; one scale-free rule for every fibre (replaced the single-sample R19 enclosure heuristic) — **R24** |
 | `axon_otsu_bias` | 10 | per-fibre Otsu peel places the axolemma at the true inner-myelin edge — R13 |
-| `axon_smooth_frac` | 0.6 | smooth the axon border into a simple curve — R13 |
+| `axon_smooth_frac` | 0.8 | smooth the axon border into a simple curve; 0.8 removes residual inner-border wobble, 0.9+ over-rounds sample_03's elongated axons — R13/**R31** |
 | `fiber_smooth_frac` | 0.2 | smooth the fibre outer envelope, remove spikes — R15 |
-| `border_smooth_tol` / `border_smooth_tol_fiber` / `border_min_radius` | 2.0 / 0.5 / 6.0 | final spline curve refit (no shrink; protects tiny axons). The OUTER (fibre) border uses a **tighter** tol → many more control points, since the myelin outline is longer/undulating and one shared tol rounded off sample_03's elongated fibres — R14/**R29** |
+| `border_smooth_tol` / `border_smooth_tol_fiber` / `border_min_radius` | 1.0 / 0.5 / 6.0 | final spline curve refit (no shrink; protects tiny axons). The INNER (axon) tol dropped 2.0 → 1.0 so the spline tracks non-circular axons instead of rounding them off (sample_03 axon 0.934 → 0.944); the OUTER (fibre) border keeps an even tighter tol → many more control points, since the myelin outline is longer/undulating — R14/R29/**R31** |
 | `remove_scalebar` | True | detect + inpaint the "200 nm" ruler, but only in clean background — R22/R12 |
 
 Note: the remaining px values (`speckle_min`, `close_fiber`, `myelin_close`,
