@@ -138,6 +138,9 @@ DEFAULTS = dict(
                               # a dense run reaching it is a touching neighbour (no gap) -> not extended
     dense_extend_gap=8,       # sparse-run length (px) that marks the end of the sheath (outer membrane)
     dense_extend_rays=360,    # angular resolution of the per-direction follow
+    dense_extend_smooth=6,    # half-width (rays) of the angular-median window that smooths the
+                              # extension into a clean envelope (no per-ray comb) -- an extension
+                              # survives only where a broad arc of rays agrees
     membrane_outer_boundary=False,  # OPT-IN: trim outer over-reach past the outermost myelin
                               # lamella (ridge-guided flood). OFF by default -- relies on the
                               # biological A-MYELIN-LAMELLAR assumption (concentric resolvable
@@ -342,7 +345,6 @@ def _extend_dense_dark(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
     # Fails if neuropil is as densely dark as myelin (heavy stain / low resolution).
     """
     H, W = dense.shape
-    add = np.zeros((H, W), bool)
     lab = fiber_mask                                     # per-axon fibre labels
     gap = int(P['dense_extend_gap'])
     NS = int(P['dense_extend_rays'])
@@ -388,27 +390,31 @@ def _extend_dense_dark(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
                         break                             # dense run ended in neuropil
                 r += 1
             tgt_r[k] = last if (not hit and last > rc) else rc
-        # circular-median smooth the extended radius so a lone ray cannot spike out:
-        # an extension survives only if neighbouring rays agree (a broad arc), not as a spine.
-        pad = 4
-        ext = np.concatenate([tgt_r[-pad:], tgt_r, tgt_r[:pad]])
-        tgt_s = np.array([np.median(ext[j:j + 2 * pad + 1]) for j in range(NS)])
-        for k in range(NS):
-            if rc_r[k] == 0:
-                continue
-            top = int(min(tgt_s[k], tgt_r[k]))            # never extend past this ray's own dense end
-            ang = 2 * np.pi * k / NS; dx, dy = np.cos(ang), np.sin(ang)
-            for r in range(int(rc_r[k]), top + 1):
-                x = int(round(cx + dx * r)); y = int(round(cy + dy * r))
-                if 0 <= x < W and 0 <= y < H:
-                    add[y, x] = True
-    if not add.any():
-        return axon_mask, myelin_mask, fiber_mask
-    add = cv2.dilate(add.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0   # close inter-ray gaps
-    for a in axons:
-        i = a['id']
-        fm = binary_fill_holes((fiber_mask == i) | (add & (fiber_mask <= 0)))
-        newpix = fm & (fiber_mask == 0)
+        # Suppress lone-ray spikes: an extension survives only if a BROAD arc of
+        # neighbouring rays agrees. Take a low percentile over a wide angular window,
+        # so a narrow spur (a few rays) is pulled back to the non-extending majority
+        # while a genuinely thick sheath sector (most rays extend) is kept.
+        pad = int(P['dense_extend_smooth'])
+        extv = np.concatenate([tgt_r[-pad:], tgt_r, tgt_r[:pad]])
+        tgt_s = np.array([np.median(extv[j:j + 2 * pad + 1]) for j in range(NS)])
+        # Fill the extension as a SOLID region -- the smooth radial envelope intersected
+        # with the dense-dark myelin -- instead of drawing per-ray lines (which leave a
+        # comb of unmerged teeth at wide radius). The envelope bounds how far out; the
+        # dense mask keeps it to actual solid myelin, so the added border is clean.
+        if (rc_r > 0).sum() < 3:
+            continue
+        angs = 2 * np.pi * np.arange(NS) / NS
+        top = np.maximum(rc_r, tgt_s)
+        sel = rc_r > 0
+        px = (cx + np.cos(angs) * top)[sel]
+        py = (cy + np.sin(angs) * top)[sel]
+        env = np.zeros((H, W), np.uint8)
+        cv2.fillPoly(env, [np.stack([px, py], 1).round().astype(np.int32)], 1)
+        env = env > 0
+        # add only the envelope's background pixels (the smooth extension sector); the
+        # exact current fibre is preserved, so the added outer border is smooth (no comb)
+        # without star-approximating the whole shape.
+        newpix = env & (fiber_mask == 0)
         fiber_mask = np.where(newpix, i, fiber_mask)
         myelin_mask = np.where(newpix & (axon_mask == 0), i, myelin_mask)
     return axon_mask, myelin_mask, fiber_mask
