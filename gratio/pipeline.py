@@ -128,6 +128,16 @@ DEFAULTS = dict(
                               # thickness. One scale-free rule for every fibre (replaces the R19
                               # per-pocket enclosure heuristic, which was tuned to one sample and
                               # over-reached on the others). 0 = off.
+    dense_extend=True,        # follow the SOLID dark myelin outward past the thickness cap where
+                              # it ends in sparse neuropil (fixes under-reach of locally-thick
+                              # sheaths). Relies on A-MYELIN-DENSE. See _extend_dense_dark.
+    dense_extend_win=17,      # px window for the local dark-density (myelin=solid dark, neuropil=
+                              # sparse). Scale-dependent (a few lamellar periods).
+    dense_extend_thr=0.4,     # min local dark fraction to count as solid myelin
+    dense_extend_gmult=3.0,   # generous radius for the follow = this x the fibre's measured thickness;
+                              # a dense run reaching it is a touching neighbour (no gap) -> not extended
+    dense_extend_gap=8,       # sparse-run length (px) that marks the end of the sheath (outer membrane)
+    dense_extend_rays=360,    # angular resolution of the per-direction follow
     membrane_outer_boundary=False,  # OPT-IN: trim outer over-reach past the outermost myelin
                               # lamella (ridge-guided flood). OFF by default -- relies on the
                               # biological A-MYELIN-LAMELLAR assumption (concentric resolvable
@@ -314,6 +324,93 @@ def _refine_outer_membrane(gf, axon_mask, myelin_mask, fiber_mask, myelin_mat, P
     trim = fib & flooded & (axon_mask == 0)      # bright over-reach past the outer membrane
     fiber_mask = np.where(trim, 0, fiber_mask)
     myelin_mask = np.where(trim, 0, myelin_mask)
+    return axon_mask, myelin_mask, fiber_mask
+
+
+def _extend_dense_dark(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
+    """Follow the SOLID dark myelin outward past the thickness cap, per direction.
+
+    # BIOLOGICAL ASSUMPTION [A-MYELIN-DENSE] -- see docs/reference/assumptions.md:
+    # myelin is SOLIDLY dark (high local dark-pixel density) whereas extracellular
+    # neuropil is only SPARSELY dark. So the sheath can be followed outward through
+    # the solid-dark region and it ENDS where the density drops to neuropil. Per ray
+    # from the axon centre: extend the fibre through dense-dark until it terminates in
+    # neuropil (the true outer edge) within a generous radius; if instead the dense
+    # run reaches the generous radius, it is a touching neighbour's myelin with no gap
+    # -- keep the current (capped) edge there. This fixes under-reach where the median
+    # thickness cap clips a locally thick sheath, without running into a neighbour.
+    # Fails if neuropil is as densely dark as myelin (heavy stain / low resolution).
+    """
+    H, W = dense.shape
+    add = np.zeros((H, W), bool)
+    lab = fiber_mask                                     # per-axon fibre labels
+    gap = int(P['dense_extend_gap'])
+    NS = int(P['dense_extend_rays'])
+    for a in axons:
+        i = a['id']
+        cur = fiber_mask == i
+        am = axon_mask == i
+        if not cur.any():
+            continue
+        cx, cy = a['cx'], a['cy']
+        dax = distance_transform_edt(~am)
+        m = cur & ~am
+        th = float(np.median(dax[m])) if m.any() else 10.0
+        gen = P['dense_extend_gmult'] * th
+        rlim = int(a['r'] + gen + 5)
+        rc_r = np.zeros(NS); tgt_r = np.zeros(NS)
+        for k in range(NS):
+            ang = 2 * np.pi * k / NS
+            dx, dy = np.cos(ang), np.sin(ang)
+            rc = 0                                        # current fibre outer radius along ray
+            for r in range(rlim, 0, -1):
+                x = int(round(cx + dx * r)); y = int(round(cy + dy * r))
+                if 0 <= x < W and 0 <= y < H and cur[y, x]:
+                    rc = r; break
+            rc_r[k] = rc
+            if rc == 0:
+                continue
+            last = rc; brun = 0; hit = False
+            r = rc + 1
+            while r < rc + int(gen) + 1:
+                x = int(round(cx + dx * r)); y = int(round(cy + dy * r))
+                if not (0 <= x < W and 0 <= y < H):
+                    break
+                if dax[y, x] > gen:                       # reached generous radius (neighbour)
+                    hit = True; break
+                if lab[y, x] not in (0, i) or (axon_mask[y, x] not in (0, i)):
+                    break                                 # do not invade another fibre/axon
+                if dense[y, x]:
+                    last = r; brun = 0
+                else:
+                    brun += 1
+                    if brun >= gap:
+                        break                             # dense run ended in neuropil
+                r += 1
+            tgt_r[k] = last if (not hit and last > rc) else rc
+        # circular-median smooth the extended radius so a lone ray cannot spike out:
+        # an extension survives only if neighbouring rays agree (a broad arc), not as a spine.
+        pad = 4
+        ext = np.concatenate([tgt_r[-pad:], tgt_r, tgt_r[:pad]])
+        tgt_s = np.array([np.median(ext[j:j + 2 * pad + 1]) for j in range(NS)])
+        for k in range(NS):
+            if rc_r[k] == 0:
+                continue
+            top = int(min(tgt_s[k], tgt_r[k]))            # never extend past this ray's own dense end
+            ang = 2 * np.pi * k / NS; dx, dy = np.cos(ang), np.sin(ang)
+            for r in range(int(rc_r[k]), top + 1):
+                x = int(round(cx + dx * r)); y = int(round(cy + dy * r))
+                if 0 <= x < W and 0 <= y < H:
+                    add[y, x] = True
+    if not add.any():
+        return axon_mask, myelin_mask, fiber_mask
+    add = cv2.dilate(add.astype(np.uint8), np.ones((3, 3), np.uint8)) > 0   # close inter-ray gaps
+    for a in axons:
+        i = a['id']
+        fm = binary_fill_holes((fiber_mask == i) | (add & (fiber_mask <= 0)))
+        newpix = fm & (fiber_mask == 0)
+        fiber_mask = np.where(newpix, i, fiber_mask)
+        myelin_mask = np.where(newpix & (axon_mask == 0), i, myelin_mask)
     return axon_mask, myelin_mask, fiber_mask
 
 
@@ -548,6 +645,20 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         bubble |= gap
         axons.append(dict(id=a['id'], cx=a['cx'], cy=a['cy'], r=a['r'],
                           solidity=a['solidity'], area=A_ax, myelin_area=A_my, g=g))
+
+    # Follow the solid dark myelin outward past the thickness cap where it ends in
+    # sparse neuropil (fixes locally-thick sheaths the median cap clips). A-MYELIN-DENSE.
+    if P['dense_extend'] and axons:
+        dark = (gf < float(np.percentile(gf, fill_pct))).astype(np.float32)
+        dense = cv2.boxFilter(dark, -1, (int(P['dense_extend_win']),) * 2) > P['dense_extend_thr']
+        axon_mask, myelin_mask, fiber_mask = _extend_dense_dark(
+            axon_mask, myelin_mask, fiber_mask, dense, axons, P)
+        myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
 
     # final polish: refit each axon + fibre border as a smooth curve (vector-like,
     # hand-tracing look) without shrinking; bubbles stay excluded from myelin.
