@@ -9,8 +9,8 @@ Current agreement (`evaluate_segmentation.py`, means over the 3 TEM samples):
 
 | metric | value |
 |--------|-------|
-| axon IoU   | 0.94 |
-| myelin IoU | 0.81 |
+| axon IoU   | 0.93 |
+| myelin IoU | 0.83 |
 | fibre IoU  | 0.94 |
 | detection precision / recall | **1.00 / 1.00** |
 
@@ -49,7 +49,8 @@ Diagnostics used during tuning (kept for reference):
 |-------|-------|-----------------------|
 | `myelin_percentile` / `myelin_fill_percentile` | 28 / 42 | decouple axon-separation threshold from the myelin-band threshold; the fill % is raised to capture lighter lamellae (~20-33% of GT myelin is brighter than the separation %) without spawning false axons — R10/R11/**R21** |
 | `min_axon_frac` | 0.02 | size floor that culls false-positive background pockets while keeping every real axon — R11 |
-| `myelin_thickness_mult` | 2.5 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant) and independent of axon radius (no g-ratio circularity). Replaced the `myelin_band`/`myelin_band_floor` radius+pixel cap — R15/R18/**R20**; tightened 3.0→2.5 to absorb the extra dark from R21 |
+| `myelin_thickness_mult` (+`_isolated`) | 3.0 / 1.8 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant), independent of axon radius (no g-ratio circularity). Isolated axons ramp to the tighter 1.8 (`isolation_ramp`) — R20/R21/**R22/R24** |
+| `fiber_vacuole_close_frac` | 1.0 | wrap the fibre outer boundary over edge vacuoles by closing it with a kernel = this × the axon's own band thickness; one scale-free rule for every fibre (replaced the single-sample R19 enclosure heuristic) — **R24** |
 | `axon_otsu_bias` | 10 | per-fibre Otsu peel places the axolemma at the true inner-myelin edge — R13 |
 | `axon_smooth_frac` | 0.6 | smooth the axon border into a simple curve — R13 |
 | `fiber_smooth_frac` | 0.2 | smooth the fibre outer envelope, remove spikes — R15 |

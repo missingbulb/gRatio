@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.92 | 0.87 | 0.95 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.84 | 0.93 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.79 | 0.94 | 1.00 / 1.00 |
-| **mean**   | **0.94** | **0.83** | **0.94** | **1.00 / 1.00** |
+| sample_01  | 0.91 | 0.86 | 0.95 | 1.00 / 1.00 |
+| sample_02  | 0.96 | 0.85 | 0.94 | 1.00 / 1.00 |
+| sample_03  | 0.92 | 0.80 | 0.94 | 1.00 / 1.00 |
+| **mean**   | **0.93** | **0.83** | **0.94** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -277,12 +277,32 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    that isolated axons are separately capped (R22), recovering some of sample_03
    #5's outer myelin. Net mean myelin 0.81 → 0.83.
 
+10. *Audit for single-case code* (R24, owner directive: nothing that only holds
+    for one sample). Three changes: (a) **removed `enclose_outer_vacuoles` (R19)**
+    — an audit showed it added mostly-correct myelin on sample_01 (77 %) but
+    mostly over-reach on sample_02 (20 %) and sample_03 (44 %), and no enclosure
+    threshold separated the two, so it was overfit to one image. It is replaced by
+    a general rule: close each fibre by `fiber_vacuole_close_frac` × **that axon's
+    own measured band thickness**, which wraps outer-edge vacuoles identically for
+    every fibre (the kernel scales with each axon's myelin, so it cannot grab the
+    extracellular blobs R19 did). This recovers sample_01 (0.84 → 0.86) with **no**
+    cost to the others; (b) the isolated/clustered cap is now a **smooth ramp**
+    (`isolation_ramp`) instead of a hard threshold, so an axon near the boundary is
+    not treated abruptly; (c) the border spline refit (`border_smooth_tol`) is off
+    by default — it was costing a little IoU and the morphological smoothing
+    already gives clean borders. The vacuole close now runs **after** the axon peel
+    so it only shapes the outer boundary, never the g-ratio. Net mean myelin
+    0.83 → 0.83 (steady) but sample_02/03 up and the pipeline is free of
+    one-sample special-casing.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
-`myelin_thickness_mult_isolated=1.8`, `isolation_ratio=8`, `detect_bubbles=False`,
-`fill_edge_holes=True`, `min_axon_frac=0.02`, `enclose_outer_vacuoles=True`; the
-thresholds are calibrated against this ground truth but the outer-myelin cap is
-scale-free and prior-free.
+`myelin_thickness_mult_isolated=1.8`, `isolation_ramp=(7,13)`,
+`fiber_vacuole_close_frac=1.0`, `detect_bubbles=False`, `fill_edge_holes=True`,
+`min_axon_frac=0.02`; every outer-myelin rule scales with each axon's own measured
+thickness (no pixel constant, no axon-radius/g-ratio prior), and the only cap
+value calibrated on a single isolated example (`myelin_thickness_mult_isolated`)
+is documented as such.
 
 **Still open after R23 (owner-review items not fully solved):**
 - *sample_02 bottom corner under-reach.* The isolated cap is a single uniform
