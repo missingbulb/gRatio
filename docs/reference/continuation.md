@@ -32,6 +32,9 @@ pytest -q                                  # 38 tests
 Diagnostics used during tuning (kept for reference):
 `border_survey.py` (12 edge/ridge detectors → `outputs/borders/`),
 `reference_run.py` (pipeline on the AxonDeepSeg SEM set → `outputs/reference_run/`).
+Per-sample error maps + the sample_02 "why geometry can't win" evidence:
+`diag_s02_diff.py`, `diag_s03_diff.py`, `diag_s02_boundary.py`,
+`diag_s02_capsweep.py` (→ `outputs/diag/`); see `learned_outer_boundary.md`.
 
 ## Pipeline shape (`gratio/pipeline.py`, `segment()`)
 
@@ -62,6 +65,20 @@ Note: the remaining px values (`speckle_min`, `close_fiber`, `myelin_close`,
 `border_*`, `vacuole_*`) are still **calibrated to these images' magnification**;
 revisit them for data at a different scale (see F5). The outer-myelin cap
 (`myelin_thickness_mult`) is no longer among them — it is measured in-image.
+
+## Active research thread — LEARNED outer boundary (next up)
+
+**sample_02's outer myelin over-reach is a proven wall for geometry** (isotropic
+cap can't fit a sheath that's thin at its shared top wall and thick on the sides;
+neighbour-split cuts inside GT; no local signal separates the over-reach because
+it *is* the neighbour's myelin). The owner found that macOS Preview's **Remove
+Background** — Apple's on-device `VNGenerateForegroundInstanceMaskRequest`, a
+trained foreground-segmentation DNN — isolates sample_02's outer boundary
+perfectly. The next route is a **learned outer boundary** (rembg+BiRefNet / SAM /
+fine-tuned model), gated to isolated fibres only. Full analysis, recreation
+routes, and the concrete next experiment are in
+[`learned_outer_boundary.md`](learned_outer_boundary.md). Reproduce the evidence
+with `python diag_s02_boundary.py` / `diag_s02_capsweep.py` / `diag_s02_diff.py`.
 
 ## Open items (see requirements.md for the full list)
 
