@@ -10,8 +10,8 @@ Current agreement (`evaluate_segmentation.py`, means over the 3 TEM samples):
 | metric | value |
 |--------|-------|
 | axon IoU   | 0.93 |
-| myelin IoU | 0.76 |
-| fibre IoU  | 0.90 |
+| myelin IoU | 0.85 |
+| fibre IoU  | 0.95 |
 | detection precision / recall | **1.00 / 1.00** |
 
 (Baseline before any tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
@@ -32,34 +32,53 @@ pytest -q                                  # 38 tests
 Diagnostics used during tuning (kept for reference):
 `border_survey.py` (12 edge/ridge detectors → `outputs/borders/`),
 `reference_run.py` (pipeline on the AxonDeepSeg SEM set → `outputs/reference_run/`).
+Per-sample error maps + the sample_02 "why geometry can't win" evidence:
+`diag_s02_diff.py`, `diag_s03_diff.py`, `diag_s02_boundary.py`,
+`diag_s02_capsweep.py` (→ `outputs/diag/`); see `learned_outer_boundary.md`.
 
 ## Pipeline shape (`gratio/pipeline.py`, `segment()`)
 
 1. optional **scale-bar removal** (`_remove_scalebar`, gated: only in clean background).
 2. bilateral filter; **myelin threshold** (`myelin_percentile`) seals rings, isolates axon compartments.
 3. **axon detection**: compartments passing area/solidity/brightness (`min_axon_frac` etc.).
-4. **myelin assignment**: dark material touching an axon within `max(myelin_band*r, myelin_band_floor)`; shared bands split by nearest axon.
+4. **myelin assignment**: dark material touching an axon, capped at `myelin_thickness_mult` × the axon's own measured ring thickness (median distance-to-axon of its dark material); shared bands split by nearest axon.
 5. **inner border** refined per fibre by an Otsu **peel** (`axon_otsu_bias`) + smoothing (`axon_smooth_frac`).
-6. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
-7. **final border refit** as least-squares smooth curves (`border_smooth_tol`, `border_min_radius`).
+6. **dense-dark extension** (`dense_extend`, A-MYELIN-DENSE) follows the solid dark sheath outward past the cap where it ends in neuropil; **junction fill** (`junction_fill`, A-JUNCTION-MYELIN) reclaims dense-dark myelin trapped between two clustered fibres (a strict no-op for isolated fibres).
+7. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
+8. **final border refit** as least-squares smooth curves (`border_smooth_tol`/`border_smooth_tol_fiber`, `border_min_radius`).
 
 ## The parameters that were tuned against the masks (why they exist)
 
 | param | value | purpose / requirement |
 |-------|-------|-----------------------|
-| `myelin_percentile` / `myelin_fill_percentile` | 28 / 34 | decouple axon-separation threshold from the myelin-band threshold (fixed under-captured myelin without spawning false axons) — R10/R11 |
+| `myelin_percentile` / `myelin_fill_percentile` | 28 / 42 | decouple axon-separation threshold from the myelin-band threshold; the fill % is raised to capture lighter lamellae (~20-33% of GT myelin is brighter than the separation %) without spawning false axons — R10/R11/**R21** |
 | `min_axon_frac` | 0.02 | size floor that culls false-positive background pockets while keeping every real axon — R11 |
-| `myelin_band` | 0.5 | physiological radial myelin cap (removed the extracellular over-reach) — R15 |
-| `myelin_band_floor` | 80 px | **absolute** floor so small axons keep their full myelin width — R18 |
+| `myelin_thickness_mult` (+`_isolated`) | 3.0 / 1.8 | outer myelin cap = this × the axon's **own measured ring thickness**; scale-free (no pixel constant), independent of axon radius (no g-ratio circularity). Isolated axons ramp to the tighter 1.8 (`isolation_ramp`) — R20/R21/**R22/R24** |
+| `fiber_vacuole_close_frac` | 1.0 | wrap the fibre outer boundary over edge vacuoles by closing it with a kernel = this × the axon's own band thickness; one scale-free rule for every fibre (replaced the single-sample R19 enclosure heuristic) — **R24** |
 | `axon_otsu_bias` | 10 | per-fibre Otsu peel places the axolemma at the true inner-myelin edge — R13 |
 | `axon_smooth_frac` | 0.6 | smooth the axon border into a simple curve — R13 |
 | `fiber_smooth_frac` | 0.2 | smooth the fibre outer envelope, remove spikes — R15 |
-| `border_smooth_tol` / `border_min_radius` | 2.0 / 6.0 | final Bézier-style curve refit (no shrink; protects tiny axons) — R14 |
+| `border_smooth_tol` / `border_smooth_tol_fiber` / `border_min_radius` | 2.0 / 0.5 / 6.0 | final spline curve refit (no shrink; protects tiny axons). The OUTER (fibre) border uses a **tighter** tol → many more control points, since the myelin outline is longer/undulating and one shared tol rounded off sample_03's elongated fibres — R14/**R29** |
 | `remove_scalebar` | True | detect + inpaint the "200 nm" ruler, but only in clean background — R22/R12 |
 
-Note: the size/px values (`min_axon_frac`, `myelin_band_floor`, `border_*`) are
-**calibrated to these images' magnification**; revisit them for data at a
-different scale (see F5).
+Note: the remaining px values (`speckle_min`, `close_fiber`, `myelin_close`,
+`border_*`, `vacuole_*`) are still **calibrated to these images' magnification**;
+revisit them for data at a different scale (see F5). The outer-myelin cap
+(`myelin_thickness_mult`) is no longer among them — it is measured in-image.
+
+## Active research thread — LEARNED outer boundary (next up)
+
+**sample_02's outer myelin over-reach is a proven wall for geometry** (isotropic
+cap can't fit a sheath that's thin at its shared top wall and thick on the sides;
+neighbour-split cuts inside GT; no local signal separates the over-reach because
+it *is* the neighbour's myelin). The owner found that macOS Preview's **Remove
+Background** — Apple's on-device `VNGenerateForegroundInstanceMaskRequest`, a
+trained foreground-segmentation DNN — isolates sample_02's outer boundary
+perfectly. The next route is a **learned outer boundary** (rembg+BiRefNet / SAM /
+fine-tuned model), gated to isolated fibres only. Full analysis, recreation
+routes, and the concrete next experiment are in
+[`learned_outer_boundary.md`](learned_outer_boundary.md). Reproduce the evidence
+with `python diag_s02_boundary.py` / `diag_s02_capsweep.py` / `diag_s02_diff.py`.
 
 ## Open items (see requirements.md for the full list)
 
@@ -89,4 +108,16 @@ tests/                    test_evaluate.py (segmentation+GT+scalebar+border),
                           test_mask_extract.py, test_reference.py, test_synthetic.py
 docs/reference/requirements.md   the owner's requirements (start here)
 docs/reference/user_masks.md     full method narrative + per-sample results
+docs/reference/assumptions.md    registry of biological/equipment assumptions (A-*) + failure modes
 ```
+
+## Biological vs image-processing assumptions
+
+Choices that encode a **specimen/microscope prior** (not pure image processing)
+are registered in [`assumptions.md`](assumptions.md) and tagged inline in
+`pipeline.py` as `# BIOLOGICAL ASSUMPTION [A-*]`. With only 3 learning images,
+some of these are thinly supported (esp. `A-ISOLATED-TIGHTER`, one axon). When a
+new sample looks wrong, check that registry first. The ridge-guided outer-boundary
+refinement (`membrane_outer_boundary`, `A-MYELIN-LAMELLAR`) is implemented but
+**OFF by default**: on the current set it trims real compact myelin through
+lamella gaps (net ≈ −0.003), so it waits for data with clearer lamellae.

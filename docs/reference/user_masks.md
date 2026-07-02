@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.91 | 0.65 | 0.83 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.81 | 0.91 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.82 | 0.96 | 1.00 / 1.00 |
-| **mean**   | **0.93** | **0.76** | **0.90** | **1.00 / 1.00** |
+| sample_01  | 0.91 | 0.87 | 0.96 | 1.00 / 1.00 |
+| sample_02  | 0.96 | 0.84 | 0.93 | 1.00 / 1.00 |
+| sample_03  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
+| **mean**   | **0.93** | **0.85** | **0.95** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -183,20 +183,222 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    axoplasm irregularly and carves the border unevenly. So the structure tensor
    was the diagnostic, but a geometric bias correction is the fix.
 
+5. *Outer myelin notch at vacuoles* (R19; sample_01 axon #2). Where the myelin
+   ring has bright gaps (vacuoles) at its outer edge that are not fully enclosed
+   by the assigned dark-material band, `binary_fill_holes` cannot close the
+   boundary — the fibre outline notches inward before each gap rather than
+   wrapping around it. Fix: `enclose_outer_vacuoles` (`vacuole_search_px=5`,
+   `vacuole_min_px=150`, `vacuole_enclosed_frac=0.50`) searches for bright
+   blobs just outside the fibre boundary whose perimeter is ≥ 50 % surrounded by
+   myelin/fibre and folds them in, after which `binary_fill_holes` closes the
+   now-sealed ring. Gain: sample_01 myelin +0.04, mean +0.01 (sample_02 -0.01
+   as a minority of near-boundary bright pockets get included there too).
+
+6. *Outer myelin cap was resolution-dependent and g-ratio-circular* (R20).
+   The band was capped at `max(myelin_band · r_axon, myelin_band_floor)` — a
+   fraction of the axon radius, floored by an absolute pixel count. Both parts
+   are unsound as general defaults: the pixel floor is pinned to *these images'
+   magnification* (a scan at another pixel size clips at a different physical
+   distance), and capping myelin thickness at a fraction of the axon radius
+   **bakes a g-ratio prior into a g-ratio measurement** — for a circular axon,
+   `myelin_band=0.5` makes it structurally impossible to report g < √(1/2.25) ≈
+   0.67, so genuinely thick myelin (low g) is clipped and read back high.
+
+   Why a cap is needed at all: an *isolated* fibre (sample_02, one axon in the
+   field) has no neighbouring axon to arbitrate its territory, so "dark material
+   connected to the axon" grows across bright extracellular gaps and vacuums up
+   unrelated dark blobs (≈30 % over-reach with no cap). In multi-axon fields the
+   nearest-axon (Voronoi) split already bounds each fibre, so the cap barely
+   binds there (2–4 % over-reach). Appearance cannot separate the over-reach —
+   it is texturally identical to real myelin (brightness, structure-tensor
+   coherence, local variance all indistinguishable), because it *is* myelin from
+   adjacent unannotated fibres. Only geometry separates it.
+
+   Fix (`myelin_thickness_mult=3.0`): cap the band at a multiple of the axon's
+   **own measured ring thickness** — the median distance-to-axon of the dark
+   material hugging it. This is derived from the image (resolution-independent,
+   no pixel constant) and is **not** a fraction of the axon radius (no g-ratio
+   circularity): a thickly-myelinated axon gets a larger cap because its measured
+   ring is genuinely thicker, not because we assumed a thickness. The measured
+   thickness scales correctly and unsupervised — sample_03's thin myelin yields a
+   small cap (~40 px), sample_02's thick myelin a large one (~155 px) — and the
+   result is accuracy-neutral vs the old radius+floor cap (mean myelin 0.777 →
+   0.772, fibre 0.912 → 0.909; recall still 1.00/1.00). The only residual
+   assumption is intra-fibre: the outer boundary lies within a few ring
+   thicknesses (a wedge ballooning many-fold is a neighbour, not this myelin).
+   An optional absolute ceiling (`myelin_band`, default off) remains for datasets
+   that need to hard-limit the measured cap (e.g. inverted-contrast SEM).
+
+7. *Lighter lamellae fell below the dark threshold* (R21). The binding limit on
+   myelin IoU was not the cap but the fill threshold: ~20-33 % of the hand-traced
+   myelin (sample_01 33 %, sample_02 27 %, sample_03 19 %) is **brighter** than
+   `myelin_fill_percentile=34`, so it was never marked as dark material and no cap
+   could recover it — the hand tracer includes lighter transitional lamellae and
+   inclusions the percentile excludes. Raising the fill threshold to 42 captures
+   them; because it is decoupled from the axon-separation threshold
+   (`myelin_percentile=28`) it does **not** loosen the inter-axon walls, so recall
+   stays 1.0 with no false positives. The extra dark material would over-reach on
+   the open extracellular side, so the thickness cap is tightened in tandem
+   (`myelin_thickness_mult` 3.0 → 2.5) to absorb it. Net: mean myelin 0.77 → 0.80,
+   fibre 0.91 → 0.93; sample_01 (most under-captured) myelin 0.71 → 0.82, fibre
+   0.88 → 0.95. The trade redistributes slightly toward the harder malformed
+   cluster (sample_03 myelin −0.03) but is a clear net gain and attacks the true
+   ceiling rather than the cap.
+
+8. *Isolated axons over-reach into open extracellular space* (R22). sample_02 is
+   a lone axon; 88 % of its myelin error was outer-side over-reach (52 k px) into
+   dark adjacent tissue that connects to its myelin and is *texturally identical*
+   to it — brightness, structure-tensor coherence, fine-scale texture, and even a
+   radial-lamellar-organization score all fail to separate the two (verified
+   pixel-wise; the same features flip sign on sample_01, whose over-reach is
+   adjacent *real* myelin). So local appearance cannot cut it. What separates the
+   two samples is structural, not local: sample_02's myelin faces open space on
+   all sides with no neighbouring axon to bound it, whereas sample_01/03 are
+   touching clusters whose thick myelin is genuinely bounded by neighbours. Fix:
+   an axon whose nearest neighbour is more than `isolation_ratio`=8 of its own
+   measured myelin thicknesses away is treated as **isolated** and uses a tighter
+   cap (`myelin_thickness_mult_isolated`=1.8) instead of the clustered default
+   (2.5); the test is scale-free (a ratio to the axon's own thickness). Isolation
+   is cleanly separable on this data (clustered axons sit at neighbour-ratio ≤ 6,
+   sample_02 at ∞). Gain: sample_02 myelin 0.79 → 0.84, fibre 0.90 → 0.93;
+   sample_01/03 unchanged (they stay clustered). A per-*pixel* open-vs-corridor
+   variant was tried and rejected: sample_01's open-facing myelin is itself thick,
+   so a tight open-side cap starved it — the decision must be per-axon, not
+   per-pixel.
+
+9. *Bubbles, edge-cut vacuoles, over-tight cluster cap* (R23, from owner review).
+   Three targeted fixes: (a) `detect_bubbles` now defaults **False** — the hand
+   tracing counts intramyelin vacuoles inside the myelin (their exclusion is a
+   deferred stage), so keeping them lifts sample_01 myelin 0.82 → 0.87; (b)
+   `fill_edge_holes` closes a bright vacuole that is enclosed by myelin on its
+   visible sides but touches the image edge (`binary_fill_holes` cannot close a
+   border-touching hole) via reflection-padding — fixes the hole in sample_01 #3's
+   myelin near the left border; (c) the clustered cap was restored 2.5 → 3.0 now
+   that isolated axons are separately capped (R22), recovering some of sample_03
+   #5's outer myelin. Net mean myelin 0.81 → 0.83.
+
+10. *Audit for single-case code* (R24, owner directive: nothing that only holds
+    for one sample). Three changes: (a) **removed `enclose_outer_vacuoles` (R19)**
+    — an audit showed it added mostly-correct myelin on sample_01 (77 %) but
+    mostly over-reach on sample_02 (20 %) and sample_03 (44 %), and no enclosure
+    threshold separated the two, so it was overfit to one image. It is replaced by
+    a general rule: close each fibre by `fiber_vacuole_close_frac` × **that axon's
+    own measured band thickness**, which wraps outer-edge vacuoles identically for
+    every fibre (the kernel scales with each axon's myelin, so it cannot grab the
+    extracellular blobs R19 did). This recovers sample_01 (0.84 → 0.86) with **no**
+    cost to the others; (b) the isolated/clustered cap is now a **smooth ramp**
+    (`isolation_ramp`) instead of a hard threshold, so an axon near the boundary is
+    not treated abruptly; (c) the border spline refit (`border_smooth_tol`) is off
+    by default — it was costing a little IoU and the morphological smoothing
+    already gives clean borders. The vacuole close now runs **after** the axon peel
+    so it only shapes the outer boundary, never the g-ratio. Net mean myelin
+    0.83 → 0.83 (steady) but sample_02/03 up and the pipeline is free of
+    one-sample special-casing.
+
+11. *Thickness-weighted territory fixes 'tentacles'* (R25, owner review). The
+    myelin shared between two touching fibres was split at the **equidistant**
+    nearest-axon (Voronoi) midline. But two sheaths meet in proportion to their
+    thickness, so a small thin-myelin axon wrongly claimed half of a wall it
+    shares with a large thick-myelin fibre — producing 'tentacles' of the small
+    fibre's colour reaching toward the large one (sample_01 #1/#3/#4 → #2). Fix:
+    assign each pixel to the axon minimising **distance ÷ that axon's own measured
+    myelin thickness**, so the thick-myelin fibre owns most of a shared wall.
+    Verified against the structure tensor: in the tentacle regions the lamellae
+    are actually concentric with the *near* axon, i.e. it is genuinely a shared
+    wall being mis-split, not over-reach into empty space. Gain: sample_01 myelin
+    0.86 → 0.86 (steady, but the assignment now matches GT's structure),
+    sample_03 0.80 → 0.81, fibre 0.94 → 0.95; tentacles removed.
+
+    *Multi-detector border study* (owner suggestion). Re-ran the 12-detector survey
+    and measured each detector's response on lamellar myelin vs the amorphous
+    over-reach: **meijering + sato ridge filters light up the myelin sheaths as
+    bright concentric rings** and are near-zero on extracellular matrix (see
+    `outputs/borders/`). They are excellent for *visualising/validating* the
+    sheaths, but pixel-gating the mask by them erodes real myelin (the compact
+    myelin *between* lamellae is dark in a ridge map), so they cannot define the
+    mask directly. Their best use — snapping the outer boundary to the outermost
+    concentric ridge — is the proposed next step for the residual open-side
+    over/under-reach (below).
+
+12. *Follow the dark sheath; reclaim junction myelin* (R27–R30). Two complementary
+    rules built on **A-MYELIN-DENSE** (myelin is solidly dark, neuropil only
+    sparsely). *Dense-dark extension* (`dense_extend`, R27–R28) follows each fibre's
+    solid dark outward past the median cap where the density drops to neuropil,
+    filling the result as a smooth radial **envelope** (not per-ray lines, which had
+    left a comb of 'orange spikes'). *Junction fill* (`junction_fill`, R30, **A-JUNCTION-MYELIN**)
+    reclaims the dense-dark myelin trapped in the interstitial pockets *between*
+    clustered fibres — material that sits beyond every axon's cap and so was left
+    unassigned (the blue 'missed' wedges in sample_03's junctions). It closes the
+    inter-fibre gaps with a scale-free kernel (`junction_fill_kfrac` × median fibre
+    thickness) and adds back only pixels that are dense-dark **and flanked by a
+    second fibre** — so open neuropil is never bridged and a lone fibre gets nothing
+    (sample_02 is byte-for-byte unchanged). Gain: sample_03 myelin 0.817 → 0.822,
+    sample_01 0.875 → 0.877, fibre 0.947 → 0.948; sample_02 preserved.
+
+    *sample_02 top over-reach — closed as a genuine wall (R30).* The owner's idea —
+    detect the neighbouring fibre's (edge-cropped, undetected) bright axoplasm and
+    split the shared dark wall between them — was prototyped two ways (equidistant
+    midline; thickness-weighted midline) and **both cut far inside the true border**.
+    The reason, made visual in `scratchpad/s02_boundary.png`: the neighbours surround
+    sample_02 closely on *all* sides while its own myelin is genuinely thick, so any
+    midline (even thickness-weighted) falls inside GT everywhere except the one spot
+    we over-reach. Confirmed independently by a cap sweep (`s02_capsweep.py`): a
+    tighter isotropic cap trades top over-reach for side under-reach with **no clean
+    optimum** (FP 29k→11k only as FN 11k→60k), because one median-thickness cap
+    cannot fit a sheath whose true thickness *varies* around the perimeter (thin
+    where it shares the top wall, thick on the sides). The over-reach pixels are
+    texturally identical to real myelin — they *are* the neighbour's myelin — so no
+    density/ridge/orientation signal separates them (six were tested, all identical).
+    This is a shared-wall ambiguity, not a tuning gap; it needs either more samples
+    (to learn a shape prior) or the hand-drawn inter-cell line. Documented under
+    A-MYELIN-DENSE's failure mode.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=34`, `myelin_band=0.5`, `min_axon_frac=0.02`,
-`axon_shrink_frac=0.06`; the size / shrink values are calibrated against this
-ground truth.
+`myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
+`myelin_thickness_mult_isolated=1.8`, `isolation_ramp=(7,13)`,
+`fiber_vacuole_close_frac=1.0`, `dense_extend=True`, `junction_fill=True`
+(`junction_fill_kfrac=3.0`), `detect_bubbles=False`, `fill_edge_holes=True`,
+`min_axon_frac=0.02`; territory is thickness-weighted and every outer-myelin rule
+scales with each axon's own measured thickness (no pixel constant, no
+axon-radius/g-ratio prior). The only cap value calibrated on a single isolated
+example (`myelin_thickness_mult_isolated`) is documented as such.
+
+**Residual, needing a per-side (not global) outer boundary:**
+- On an *open* extracellular-facing arc a fibre can over-reach (sample_03 #2,
+  sample_02 top) while on a *corner/edge* arc it under-reaches (sample_03 #5,
+  sample_02 bottom) — opposite errors a single radial cap cannot fix at once.
+  The membrane ridge map (meijering/sato) marks the true outer sheath and is the
+  intended tool: terminate the band at the outermost concentric ridge per angle.
+
+**Still open after R23 (owner-review items not fully solved):**
+- *sample_02 bottom corner under-reach.* The isolated cap is a single uniform
+  radial distance; at a convex axon corner the true myelin reaches a larger
+  distance-to-axon than on the flat sides, so a uniform cap that stops the top
+  over-reach also clips the bottom corner. Fixing both at once needs a
+  per-location outer-membrane terminator (a bright-gap stop), which was tried and
+  found fragile; deferred.
+- *inner myelin eaten by the axon border* (sample_01 #2 inner arc, sample_03 #5
+  inner). The Otsu peel is already at its best global bias (10); raising it to
+  recover inner myelin over-shrinks sample_03's small axons. Needs a local, not
+  global, inner-border refinement.
+- *shared wall sample_03 #3–#5* partly not dark material, so not recoverable by
+  the cap alone.
 
 **Known residual limits:**
-- A small dark extracellular lobe can abut the myelin with no bright gap
-  between them; a radial cap that keeps genuinely thick myelin cannot fully
-  reject it (sample_02, top-left).
+- An isolated fibre's outer bound rests on the measured-thickness cap, not on an
+  image edge, because the over-reaching material is texturally identical to real
+  myelin (adjacent unannotated fibres) and only geometry separates it. The cap is
+  now scale-free and prior-free but is still a geometric heuristic, not evidence
+  of an outer membrane (sample_02, ≈−0.01 residual).
 - Touching cells are not yet split *along the hand-drawn inter-cell line*; the
   outer border of each fibre is captured but the shared wall between two cells'
   myelin is assigned by nearest-axon, not by that line.
 - sample_01's myelin IoU stays lowest, partly definitional — the hand-traced
-  myelin there is very generous and still includes the orange omit regions.
+  myelin there is generous and includes the orange omit regions (not yet excluded).
+- Cluster axons with the thickest myelin walls (sample_01 #3, per-axon IoU ≈ 0.48)
+  under-capture myelin for an *upstream* reason, not the cap: much of that hand-
+  traced myelin is never marked dark by the fill threshold or is not connected to
+  the axon's dark ring, so raising the cap alone cannot recover it.
 
 The harness and the perfect-recall / no-false-positive guarantees are pinned by
 `tests/test_evaluate.py`.

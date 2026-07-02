@@ -51,7 +51,8 @@ these TEM samples). Inverted-contrast (e.g. SEM) data needs a polarity step.
 from __future__ import annotations
 import cv2
 import numpy as np
-from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc_label
+from scipy.ndimage import (binary_fill_holes, binary_propagation,
+                           distance_transform_edt, label as cc_label)
 from scipy.interpolate import splprep, splev
 
 # Default parameters. Override per call via segment(..., **overrides).
@@ -59,7 +60,11 @@ DEFAULTS = dict(
     remove_scalebar=True,     # detect & inpaint a burn-in scale-bar ruler + label before segmenting
     bilateral=(9, 75, 75),    # OpenCV bilateralFilter (d, sigmaColor, sigmaSpace)
     myelin_percentile=28,     # darkest X% of pixels treated as myelin (axon separation / detection)
-    myelin_fill_percentile=34,  # more inclusive % for the band + inner border (None -> = myelin_percentile)
+    myelin_fill_percentile=42,  # more inclusive % for the band + inner border (None -> = myelin_percentile).
+                              # Decoupled from myelin_percentile (axon separation) so it can be raised to
+                              # capture the lighter transitional lamellae the hand tracer includes -- ~20-33%
+                              # of GT myelin is brighter than the separation threshold -- without loosening
+                              # the walls that separate axons (recall stays 1.0).
     speckle_min=40,           # drop myelin connected components smaller than this (px)
     close_fiber=27,           # seal broken rings to isolate axon bodies
     myelin_close=11,          # close thin inter-lamellar gaps (keeps large gaps open)
@@ -69,9 +74,33 @@ DEFAULTS = dict(
     min_solidity=0.90,        # reject corner pockets / leaky bodies (real axons are convex)
     bright_margin=-25,        # axon-body mean intensity must exceed median(image)+margin (mild floor)
     touch_dilate=5,           # myelin must touch the axon within this many px
-    myelin_band=0.5,          # myelin thickness cap as a fraction of axon radius...
-    myelin_band_floor=80,     # ...but at least this many px, so small axons with proportionally thick
-                              # myelin are not clipped (large axons already exceed it; scale-calibrated)
+    myelin_thickness_mult=3.0,  # outer myelin cap = this multiple of the axon's OWN measured
+                              # ring thickness (the median distance-to-axon of the dark material
+                              # hugging it). This bounds how far the band grows outward so an
+                              # isolated fibre does not vacuum up dark extracellular material that
+                              # connects to it (there is no neighbouring axon to arbitrate). It is
+                              # derived from the image, not from a pixel count, so it is
+                              # resolution-independent; and it is NOT a fraction of the axon radius,
+                              # so it does not bake a g-ratio prior into a g-ratio measurement --
+                              # a thickly-myelinated axon gets a proportionally larger cap because
+                              # its measured ring is thicker, not because we assumed it. The only
+                              # residual assumption is intra-fibre: the outer boundary is within a
+                              # few ring-thicknesses of the axon (a wedge ballooning many-fold is a
+                              # neighbour bleeding in, not this fibre's myelin).
+    myelin_thickness_mult_isolated=1.8,  # tighter cap for an ISOLATED axon (see isolation_ramp):
+                              # its myelin faces open extracellular space on all sides, where dark
+                              # adjacent tissue looks like myelin and no neighbouring axon bounds it,
+                              # so the band must not run past the axon's own uniform ring thickness.
+    isolation_ramp=(7.0, 13.0),  # neighbour-distance/own-thickness range over which the cap ramps
+                              # from clustered (myelin_thickness_mult, at/below 7) to isolated
+                              # (myelin_thickness_mult_isolated, at/above 13). A smooth ramp, not a
+                              # hard switch, so an axon near the boundary is not treated abruptly.
+                              # On the calibration data clustered axons sit at ratio <=6.3 and the one
+                              # isolated axon at infinity, so the ramp reproduces the intended split
+                              # with margin; it exists to degrade gracefully on unseen spacings.
+    myelin_band=None,         # optional ABSOLUTE ceiling as a fraction of axon radius; None = off.
+                              # Only useful to hard-limit a dataset where the measured-thickness cap
+                              # is not enough (e.g. inverted-contrast SEM tuning in reference_run.py).
     smooth_frac=0.15,         # border smoothing kernel as a fraction of axon radius
     smooth_max_px=21,         # ...capped to this absolute size (avoid distorting big axons)
     axon_otsu_bias=10,        # the axon border is refined per fibre: Otsu-split the fibre into bright
@@ -84,13 +113,54 @@ DEFAULTS = dict(
     fiber_smooth_frac=0.2,    # smooth the fibre outer bound (open then close) by this fraction of the
                               # axon radius, so it is a clean rounded envelope like a hand tracing
                               # instead of a spiky outline that reaches into the extracellular space
-    border_smooth_tol=2.0,    # final pass: refit axon+fibre borders as smooth curves within this many px
-                              # (least-squares spline; removes pixel staircase without shrinking). 0 = off
+    border_smooth_tol=2.0,    # final pass: refit the INNER (axon) border as a smooth spline within this
+                              # many px (least-squares periodic spline; removes the pixel staircase
+                              # without shrinking). Larger tol -> fewer control points -> smoother.
+    border_smooth_tol_fiber=0.5,  # SEPARATE, tighter tol for the OUTER (fibre) border -> many more
+                              # control points, so its longer/undulating outline is de-staircased
+                              # without the shape-rounding that a shared (axon) tol caused on sample_03.
+                              # None -> use border_smooth_tol.
     border_min_radius=6.0,    # ...but do not refit a region whose equivalent radius is below this (px)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
-    detect_bubbles=True,      # if False, bright gaps stay part of the myelin band (bubble
-                              # detection deferred to a later stage; nothing highlighted)
+    detect_bubbles=False,     # if False, bright gaps (vacuoles) stay part of the myelin band --
+                              # the hand tracing counts them inside the myelin, and their removal
+                              # is a deferred later stage. Set True to split them out and highlight.
+    fiber_vacuole_close_frac=1.0,  # wrap the fibre outer boundary over edge vacuoles by closing it
+                              # with a kernel = this fraction of the axon's OWN measured band
+                              # thickness. One scale-free rule for every fibre (replaces the R19
+                              # per-pocket enclosure heuristic, which was tuned to one sample and
+                              # over-reached on the others). 0 = off.
+    dense_extend=True,        # follow the SOLID dark myelin outward past the thickness cap where
+                              # it ends in sparse neuropil (fixes under-reach of locally-thick
+                              # sheaths). Relies on A-MYELIN-DENSE. See _extend_dense_dark.
+    dense_extend_win=17,      # px window for the local dark-density (myelin=solid dark, neuropil=
+                              # sparse). Scale-dependent (a few lamellar periods).
+    dense_extend_thr=0.4,     # min local dark fraction to count as solid myelin
+    dense_extend_gmult=3.0,   # generous radius for the follow = this x the fibre's measured thickness;
+                              # a dense run reaching it is a touching neighbour (no gap) -> not extended
+    dense_extend_gap=8,       # sparse-run length (px) that marks the end of the sheath (outer membrane)
+    dense_extend_rays=360,    # angular resolution of the per-direction follow
+    dense_extend_smooth=6,    # half-width (rays) of the angular-median window that smooths the
+                              # extension into a clean envelope (no per-ray comb) -- an extension
+                              # survives only where a broad arc of rays agrees
+    junction_fill=True,       # reclaim dense-dark myelin trapped in the interstitial junctions
+                              # BETWEEN clustered fibres (beyond every axon's cap, so left
+                              # unassigned). Relies on A-JUNCTION-MYELIN. See _fill_junction_myelin.
+    junction_fill_kfrac=3.0,  # bridge inter-fibre gaps up to this multiple of the median fibre
+                              # myelin thickness (scale-free); only pixels flanked by TWO fibres and
+                              # actually dense-dark are added, so isolated fibres are untouched
+    membrane_outer_boundary=False,  # OPT-IN: trim outer over-reach past the outermost myelin
+                              # lamella (ridge-guided flood). OFF by default -- relies on the
+                              # biological A-MYELIN-LAMELLAR assumption (concentric resolvable
+                              # lamellae) and on the current 3-image set it trims real compact
+                              # myelin through lamella gaps (net ~ -0.003 IoU). See
+                              # docs/reference/assumptions.md before enabling on new data.
+    membrane_ridge_thr=0.12,  # ridge strength (meijering+sato, 0..1) counted as a lamella barrier
+    fill_edge_holes=True,     # fill vacuoles cut open by the IMAGE EDGE: a bright pocket enclosed
+                              # by myelin on its visible sides but touching the border cannot be
+                              # closed by binary_fill_holes; reflect-pad handles it. Only affects
+                              # fibres that touch the image edge.
 )
 
 # Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
@@ -229,6 +299,194 @@ def _peel_axon(gf, fiber, cx, cy, bias, k):
     return _smooth(axon, k) & F
 
 
+def _refine_outer_membrane(gf, axon_mask, myelin_mask, fiber_mask, myelin_mat, P):
+    """Trim fibre over-reach that lies BEYOND the outermost myelin membrane.
+
+    # BIOLOGICAL ASSUMPTION [A-MYELIN-LAMELLAR] -- see docs/reference/assumptions.md
+    # The myelin sheath is a stack of concentric membranes (lamellae) that render as
+    # ridges; genuine extracellular space is reachable from outside the fibre WITHOUT
+    # crossing a lamella. So we flood inward from the background, blocked by ridge
+    # (meijering+sato) and dark-myelin barriers -- any fibre area the flood reaches
+    # lies past the outermost membrane and is trimmed as over-reach. This FAILS when
+    # the myelin has no resolvable lamellae (immature/compact-only myelin, or too low
+    # magnification): with no ridge barrier the flood leaks into real myelin. That is
+    # why this refinement is OFF by default (membrane_outer_boundary=False); on the
+    # current 3-image set it trims real compact myelin through lamella gaps.
+
+    Opt-in (needs scikit-image); returns possibly-trimmed (axon, myelin, fiber) masks.
+    """
+    try:
+        from skimage.filters import meijering, sato
+    except Exception:
+        return axon_mask, myelin_mask, fiber_mask
+    x = gf.astype(np.float32)
+    b = cv2.bilateralFilter(gf, 9, 75, 75).astype(float) / 255.0
+
+    def _n(a):
+        lo, hi = np.percentile(a, [1, 99]); hi = hi if hi > lo else lo + 1
+        return np.clip((a - lo) / (hi - lo), 0, 1)
+    M = np.maximum(_n(meijering(b, sigmas=range(1, 6), black_ridges=True)),
+                   _n(sato(b, sigmas=range(1, 6), black_ridges=True)))
+    ridges = cv2.dilate((M > P['membrane_ridge_thr']).astype(np.uint8),
+                        np.ones((3, 3), np.uint8), iterations=2) > 0
+    barrier = myelin_mat | ridges | (axon_mask > 0)
+    fib = fiber_mask > 0
+    outside = (~fib) & (~barrier)
+    flooded = binary_propagation(outside, mask=~barrier)
+    trim = fib & flooded & (axon_mask == 0)      # bright over-reach past the outer membrane
+    fiber_mask = np.where(trim, 0, fiber_mask)
+    myelin_mask = np.where(trim, 0, myelin_mask)
+    return axon_mask, myelin_mask, fiber_mask
+
+
+def _extend_dense_dark(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
+    """Follow the SOLID dark myelin outward past the thickness cap, per direction.
+
+    # BIOLOGICAL ASSUMPTION [A-MYELIN-DENSE] -- see docs/reference/assumptions.md:
+    # myelin is SOLIDLY dark (high local dark-pixel density) whereas extracellular
+    # neuropil is only SPARSELY dark. So the sheath can be followed outward through
+    # the solid-dark region and it ENDS where the density drops to neuropil. Per ray
+    # from the axon centre: extend the fibre through dense-dark until it terminates in
+    # neuropil (the true outer edge) within a generous radius; if instead the dense
+    # run reaches the generous radius, it is a touching neighbour's myelin with no gap
+    # -- keep the current (capped) edge there. This fixes under-reach where the median
+    # thickness cap clips a locally thick sheath, without running into a neighbour.
+    # Fails if neuropil is as densely dark as myelin (heavy stain / low resolution).
+    """
+    H, W = dense.shape
+    lab = fiber_mask                                     # per-axon fibre labels
+    gap = int(P['dense_extend_gap'])
+    NS = int(P['dense_extend_rays'])
+    for a in axons:
+        i = a['id']
+        cur = fiber_mask == i
+        am = axon_mask == i
+        if not cur.any():
+            continue
+        cx, cy = a['cx'], a['cy']
+        dax = distance_transform_edt(~am)
+        m = cur & ~am
+        th = float(np.median(dax[m])) if m.any() else 10.0
+        gen = P['dense_extend_gmult'] * th
+        rlim = int(a['r'] + gen + 5)
+        rc_r = np.zeros(NS); tgt_r = np.zeros(NS)
+        for k in range(NS):
+            ang = 2 * np.pi * k / NS
+            dx, dy = np.cos(ang), np.sin(ang)
+            rc = 0                                        # current fibre outer radius along ray
+            for r in range(rlim, 0, -1):
+                x = int(round(cx + dx * r)); y = int(round(cy + dy * r))
+                if 0 <= x < W and 0 <= y < H and cur[y, x]:
+                    rc = r; break
+            rc_r[k] = rc
+            if rc == 0:
+                continue
+            last = rc; brun = 0; hit = False
+            r = rc + 1
+            while r < rc + int(gen) + 1:
+                x = int(round(cx + dx * r)); y = int(round(cy + dy * r))
+                if not (0 <= x < W and 0 <= y < H):
+                    break
+                if dax[y, x] > gen:                       # reached generous radius (neighbour)
+                    hit = True; break
+                if lab[y, x] not in (0, i) or (axon_mask[y, x] not in (0, i)):
+                    break                                 # do not invade another fibre/axon
+                if dense[y, x]:
+                    last = r; brun = 0
+                else:
+                    brun += 1
+                    if brun >= gap:
+                        break                             # dense run ended in neuropil
+                r += 1
+            tgt_r[k] = last if (not hit and last > rc) else rc
+        # Suppress lone-ray spikes: an extension survives only if a BROAD arc of
+        # neighbouring rays agrees. Take a low percentile over a wide angular window,
+        # so a narrow spur (a few rays) is pulled back to the non-extending majority
+        # while a genuinely thick sheath sector (most rays extend) is kept.
+        pad = int(P['dense_extend_smooth'])
+        extv = np.concatenate([tgt_r[-pad:], tgt_r, tgt_r[:pad]])
+        tgt_s = np.array([np.median(extv[j:j + 2 * pad + 1]) for j in range(NS)])
+        # Fill the extension as a SOLID region -- the smooth radial envelope intersected
+        # with the dense-dark myelin -- instead of drawing per-ray lines (which leave a
+        # comb of unmerged teeth at wide radius). The envelope bounds how far out; the
+        # dense mask keeps it to actual solid myelin, so the added border is clean.
+        if (rc_r > 0).sum() < 3:
+            continue
+        angs = 2 * np.pi * np.arange(NS) / NS
+        top = np.maximum(rc_r, tgt_s)
+        sel = rc_r > 0
+        px = (cx + np.cos(angs) * top)[sel]
+        py = (cy + np.sin(angs) * top)[sel]
+        env = np.zeros((H, W), np.uint8)
+        cv2.fillPoly(env, [np.stack([px, py], 1).round().astype(np.int32)], 1)
+        env = env > 0
+        # add only the envelope's background pixels (the smooth extension sector); the
+        # exact current fibre is preserved, so the added outer border is smooth (no comb)
+        # without star-approximating the whole shape.
+        newpix = env & (fiber_mask == 0)
+        fiber_mask = np.where(newpix, i, fiber_mask)
+        myelin_mask = np.where(newpix & (axon_mask == 0), i, myelin_mask)
+    return axon_mask, myelin_mask, fiber_mask
+
+
+def _fill_junction_myelin(axon_mask, myelin_mask, fiber_mask, dense, axons, P):
+    """Reclaim dense-dark myelin trapped in the junctions BETWEEN clustered fibres.
+
+    # BIOLOGICAL ASSUMPTION [A-JUNCTION-MYELIN] -- see docs/reference/assumptions.md:
+    # where several myelinated fibres pack together, the dark material filling the
+    # interstitial pocket between two adjacent sheaths IS myelin (their touching
+    # compact-myelin walls), not some other dark structure. That pocket sits beyond
+    # every axon's own thickness cap (it is far from all axon centres), so the capped
+    # assignment leaves it unclaimed -- a persistent under-reach in tight clusters.
+    # Bridge the inter-fibre gaps by CLOSING the fibre union with a scale-free kernel
+    # (a multiple of the median fibre thickness), then add back only pixels that are
+    # (a) actually dense-dark and (b) flanked by a SECOND fibre within the kernel --
+    # so open extracellular neuropil (no fibre on the far side to bridge to) is never
+    # filled and a genuinely isolated fibre gets nothing. Fails if a dark non-myelin
+    # process runs through the junction, or if two fibres are pressed so close that the
+    # gate admits a sliver of the neuropil between them.
+    """
+    ids = [a['id'] for a in axons]
+    if len(ids) < 2:
+        return axon_mask, myelin_mask, fiber_mask         # no junction without >=2 fibres
+    H, W = dense.shape
+    dist_by = {i: distance_transform_edt(fiber_mask != i) for i in ids}
+    ths = []
+    for a in axons:
+        am = axon_mask == a['id']
+        mm = (fiber_mask == a['id']) & ~am
+        if mm.any():
+            ths.append(float(np.median(distance_transform_edt(~am)[mm])))
+    th = float(np.median(ths)) if ths else 10.0
+    k = max(3, int(round(P['junction_fill_kfrac'] * th)) | 1)
+    ker = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    closed = cv2.morphologyEx((fiber_mask > 0).astype(np.uint8), cv2.MORPH_CLOSE, ker) > 0
+    dstack = np.stack([dist_by[i] for i in ids], 0)
+    order = np.argsort(dstack, 0)
+    nearest = np.array(ids)[order[0]]
+    d2 = np.take_along_axis(dstack, order[1:2], 0)[0]     # distance to the 2nd-nearest fibre
+    added = closed & dense & (fiber_mask == 0) & (d2 <= k)
+    fiber_mask = np.where(added, nearest, fiber_mask)
+    myelin_mask = np.where(added & (axon_mask == 0), nearest, myelin_mask)
+    return axon_mask, myelin_mask, fiber_mask
+
+
+def _fill_edge_holes(fm, margin=40):
+    """Fill vacuoles that are enclosed by the fibre except where the IMAGE EDGE
+    cuts through them. ``binary_fill_holes`` cannot close a hole that touches the
+    border (it is connected to the exterior), so a bright pocket sitting in the
+    myelin of an edge-cropped fibre is left open. Reflect-pad the mask before
+    filling: the pocket is closed by its own mirror across the edge, while the
+    genuine exterior reflects to more exterior and stays connected to the padded
+    border (so it is not filled). Only affects fibres that touch the image edge.
+    """
+    if not (fm[0, :].any() or fm[-1, :].any() or fm[:, 0].any() or fm[:, -1].any()):
+        return fm
+    p = np.pad(fm.astype(np.uint8), margin, mode='reflect')
+    f = binary_fill_holes(p > 0)
+    return f[margin:-margin, margin:-margin]
+
+
 def segment(gray: np.ndarray, **overrides) -> dict:
     """Segment axon bodies + myelin bands and compute the area-based g-ratio.
 
@@ -245,6 +503,9 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     H, W = gray.shape
 
     gf = cv2.bilateralFilter(gray, *P['bilateral'])
+    # BIOLOGICAL ASSUMPTION [A-MYELIN-DARK] -- see docs/reference/assumptions.md:
+    # myelin is the darkest tissue (osmium-stained TEM). The whole threshold-based
+    # detection assumes this polarity; inverted-contrast modalities need `255 - image`.
     T = float(np.percentile(gf, P['myelin_percentile']))
     myel = (gf < T).astype(np.uint8)
 
@@ -271,7 +532,10 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     km = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['myelin_close'],) * 2)
     myelin_mat = cv2.morphologyEx(myel_fill, cv2.MORPH_CLOSE, km) > 0
 
-    # candidate axon compartments = regions separated by the sealed myelin
+    # candidate axon compartments = regions separated by the sealed myelin.
+    # BIOLOGICAL ASSUMPTION [A-AXON-CONVEX-BRIGHT] -- see docs/reference/assumptions.md:
+    # an axon body is a bright, roughly convex compartment above a size floor
+    # (min_axon_frac / min_solidity / bright_margin below).
     sep = enclosed & ~mc.astype(bool)
     minA, maxA = P['min_axon_frac'] * H * W, P['max_axon_frac'] * H * W
     bright_thr = np.median(gf) + P['bright_margin']
@@ -319,11 +583,63 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     myelin_keep = np.isin(myl_lab, touch)
     dist, (iy, ix) = distance_transform_edt(axon_lbl == 0, return_indices=True)
     nearest = axon_lbl[iy, ix]
+    # Outer myelin cap, per axon, derived from the axon's OWN ring thickness rather
+    # than from a pixel count or a fraction of the axon radius (see myelin_thickness_mult).
+    # thickness = median distance-to-axon of the dark material assigned to this axon;
+    # the median is robust to the far extracellular blobs that inflate the tail.
+    uncapped = myelin_keep & (nearest > 0)
     r_by = np.zeros(len(cands) + 1)
+    cap_by = np.zeros(len(cands) + 1)
+    thick_by = np.zeros(len(cands) + 1)
+    ids = [a['id'] for a in cands]
+    # per-axon distance transforms (reused for the isolation test, the thickness-
+    # weighted territory, and the cap -- one transform per axon, not per use)
+    dist_by = {i: distance_transform_edt(axon_lbl != i) for i in ids}
     for a in cands:
-        r_by[a['id']] = a['r']
-    band_cap = np.maximum(P['myelin_band'] * r_by[nearest], P['myelin_band_floor'])
-    assigned = np.where(myelin_keep & (nearest > 0) & (dist <= band_cap), nearest, 0)
+        i = a['id']
+        r_by[i] = a['r']
+        d = dist[uncapped & (nearest == i)]           # thickness from the plain Voronoi ring
+        thick = float(np.median(d)) if d.size else 0.0
+        thick_by[i] = thick
+        # BIOLOGICAL ASSUMPTION [A-ISOLATED-TIGHTER] -- see docs/reference/assumptions.md
+        # (calibrated on ONE isolated axon; the weakest-supported number here).
+        # An axon whose nearest neighbour is many myelin-thicknesses away is ISOLATED:
+        # its myelin faces open extracellular space, where dark adjacent tissue can be
+        # taken for myelin with no neighbouring axon to arbitrate the boundary. Such an
+        # axon uses a tighter cap. A clustered axon keeps the generous cap for its
+        # genuinely thick shared walls (which the neighbour, not the cap, bounds). The
+        # isolation measure is scale-free -- the neighbour distance in units of this
+        # axon's own measured thickness -- and the multiplier RAMPS smoothly between the
+        # clustered and isolated values rather than flipping at a hard threshold, so two
+        # near-identical axons near the boundary are not treated very differently.
+        if len(cands) > 1 and thick > 0:
+            other = (axon_lbl > 0) & (axon_lbl != i)
+            ratio = float(dist_by[i][other].min()) / thick
+        else:
+            ratio = np.inf                       # lone axon in the field
+        lo, hi = P['isolation_ramp']
+        t = float(np.clip((ratio - lo) / (hi - lo), 0.0, 1.0))   # 0 clustered -> 1 isolated
+        mult = P['myelin_thickness_mult'] + t * (P['myelin_thickness_mult_isolated'] - P['myelin_thickness_mult'])
+        cap_by[i] = mult * thick
+
+    # BIOLOGICAL ASSUMPTION [A-SHEATHS-MEET-BY-THICKNESS] -- see docs/reference/assumptions.md.
+    # Thickness-weighted territory: two touching fibres' sheaths meet in proportion to
+    # their myelin thickness, NOT at the equidistant midline. Assign each pixel to the
+    # axon minimising (distance / that axon's own measured thickness), so a thin-myelin
+    # small axon cannot claim half of a wall it shares with a thick-myelin neighbour --
+    # that equidistant split was what produced 'tentacles' of a small fibre's myelin
+    # reaching toward a larger one. Falls back to plain nearest when thicknesses are equal.
+    eps = 1e-3
+    wscore = np.stack([dist_by[i] / max(thick_by[i], eps) for i in ids], 0)
+    oidx = np.argmin(wscore, 0)
+    owner = np.array(ids)[oidx]                       # per-pixel owning axon (always > 0)
+    d_owner = np.take_along_axis(np.stack([dist_by[i] for i in ids], 0), oidx[None], 0)[0]
+    cap_at = np.zeros_like(d_owner)
+    for pos, i in enumerate(ids):
+        cap_at[owner == i] = cap_by[i]
+        if P.get('myelin_band'):                      # optional absolute ceiling (usually off)
+            cap_at[owner == i] = min(cap_by[i], P['myelin_band'] * r_by[i])
+    assigned = np.where(uncapped & (d_owner <= cap_at), owner, 0)
 
     axon_mask = np.zeros((H, W), np.int32)
     myelin_mask = np.zeros((H, W), np.int32)
@@ -331,7 +647,7 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     bubble = np.zeros((H, W), bool)
     axons = []
     for a in cands:
-        terr = (nearest == a['id']) | (nearest == 0)   # Voronoi territory (split touching fibers)
+        terr = owner == a['id']              # thickness-weighted territory (split touching fibers)
         k = min(a['r'] * P['smooth_frac'], P['smooth_max_px'])
         fm = _smooth(binary_fill_holes(a['body'] | (assigned == a['id'])) & terr, k)
         # smooth the fibre outer bound into a clean rounded envelope: open removes
@@ -344,9 +660,25 @@ def segment(gray: np.ndarray, **overrides) -> dict:
             fm2 = cv2.morphologyEx(fm2, cv2.MORPH_CLOSE, el2)
             fm = binary_fill_holes(fm2 > 0) & terr
         # refine the axon border to the real inner-myelin edge (per-fibre Otsu peel),
-        # then smooth it into a clean rounded shape like a hand tracing
+        # then smooth it into a clean rounded shape like a hand tracing. Do this BEFORE
+        # wrapping outer vacuoles so the vacuole-wrapping (which only grows the outer
+        # boundary) cannot shift the inner axon border / the g-ratio.
         sk = min(P['axon_smooth_frac'] * a['r'], P['axon_smooth_max'])
         am = _peel_axon(gf, fm, a['cx'], a['cy'], P['axon_otsu_bias'], sk)
+        # Wrap the outer boundary over bright vacuoles sitting at the myelin's outer
+        # edge: morphological close by a fraction of THIS axon's own measured band
+        # thickness. This is one scale-free rule for every fibre (the kernel scales
+        # with each axon's myelin), not a per-pocket enclosure test tuned to one image.
+        if P['fiber_vacuole_close_frac'] > 0 and fm.any() and thick_by[a['id']] > 0:
+            kc = int(max(3, P['fiber_vacuole_close_frac'] * thick_by[a['id']])) | 1
+            elc = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (kc, kc))
+            fm = cv2.morphologyEx(fm.astype(np.uint8), cv2.MORPH_CLOSE, elc) > 0
+            fm = binary_fill_holes(fm) & terr
+        # fill vacuoles cut open by the image edge (edge-cropped fibres) so a
+        # bright pocket enclosed by myelin on its visible sides stays inside the fibre
+        if P['fill_edge_holes'] and fm.any():
+            fm = _fill_edge_holes(fm) & terr
+        am = am & fm                              # axon stays within the (only-grown) fibre
         annulus = fm & ~am
         holes = annulus & ~myelin_mat
         hl, nh = cc_label(holes)
@@ -371,14 +703,48 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         axons.append(dict(id=a['id'], cx=a['cx'], cy=a['cy'], r=a['r'],
                           solidity=a['solidity'], area=A_ax, myelin_area=A_my, g=g))
 
-    # final polish: refit each axon + fibre border as a smooth curve (vector-like,
-    # hand-tracing look) without shrinking; bubbles stay excluded from myelin.
+    # Follow the solid dark myelin outward past the thickness cap where it ends in
+    # sparse neuropil (fixes locally-thick sheaths the median cap clips). A-MYELIN-DENSE.
+    if P['dense_extend'] and axons:
+        dark = (gf < float(np.percentile(gf, fill_pct))).astype(np.float32)
+        dense = cv2.boxFilter(dark, -1, (int(P['dense_extend_win']),) * 2) > P['dense_extend_thr']
+        axon_mask, myelin_mask, fiber_mask = _extend_dense_dark(
+            axon_mask, myelin_mask, fiber_mask, dense, axons, P)
+        myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
+
+    # Reclaim dense-dark myelin trapped in the junctions between clustered fibres
+    # (unassigned because it lies beyond every axon's cap). A-JUNCTION-MYELIN.
+    if P['junction_fill'] and len(axons) > 1:
+        dark = (gf < float(np.percentile(gf, fill_pct))).astype(np.float32)
+        dense = cv2.boxFilter(dark, -1, (int(P['dense_extend_win']),) * 2) > P['dense_extend_thr']
+        axon_mask, myelin_mask, fiber_mask = _fill_junction_myelin(
+            axon_mask, myelin_mask, fiber_mask, dense, axons, P)
+        myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
+
+    # final polish: refit each axon + fibre border as a smooth spline curve (vector-like,
+    # hand-tracing look) without shrinking; bubbles stay excluded from myelin. The OUTER
+    # (fibre) border gets a SEPARATE, tighter tolerance than the inner (axon) one: the
+    # spline's control-point count grows as the tolerance shrinks (knots satisfy sum of
+    # squared residuals <= n*tol^2), and the myelin outline is longer and more undulating
+    # than the compact axon body, so it needs many more curves to smooth the pixel
+    # staircase without rounding off real shape (as one shared tolerance did to sample_03).
     if P['border_smooth_tol'] > 0 and axons:
         sa = np.zeros((H, W), np.int32)
         sf = np.zeros((H, W), np.int32)
+        ftol = P['border_smooth_tol_fiber'] or P['border_smooth_tol']
         for a in axons:
             fs = fit_smooth_border(fiber_mask == a['id'],
-                                   P['border_smooth_tol'], P['border_min_radius'])
+                                   ftol, P['border_min_radius'])
             as_ = fit_smooth_border(axon_mask == a['id'],
                                     P['border_smooth_tol'], P['border_min_radius']) & fs
             sf[fs] = a['id']
@@ -386,6 +752,16 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         axon_mask, fiber_mask = sa, sf
         myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble,
                                fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
+
+    # OPT-IN outer-membrane refinement (default off; see A-MYELIN-LAMELLAR).
+    if P['membrane_outer_boundary'] and axons:
+        axon_mask, myelin_mask, fiber_mask = _refine_outer_membrane(
+            gf, axon_mask, myelin_mask, fiber_mask, myelin_mat, P)
         for a in axons:
             A_ax = int((axon_mask == a['id']).sum())
             A_my = int((myelin_mask == a['id']).sum())
