@@ -54,7 +54,7 @@ Diagnostics used during tuning (kept for reference):
 | `axon_otsu_bias` | 10 | per-fibre Otsu peel places the axolemma at the true inner-myelin edge — R13 |
 | `axon_smooth_frac` | 0.6 | smooth the axon border into a simple curve — R13 |
 | `fiber_smooth_frac` | 0.2 | smooth the fibre outer envelope, remove spikes — R15 |
-| `border_smooth_tol` / `border_min_radius` | 2.0 / 6.0 | final Bézier-style curve refit (no shrink; protects tiny axons) — R14 |
+| `border_smooth_tol` / `border_smooth_tol_fiber` / `border_min_radius` | 2.0 / 0.5 / 6.0 | final spline curve refit (no shrink; protects tiny axons). The OUTER (fibre) border uses a **tighter** tol → many more control points, since the myelin outline is longer/undulating and one shared tol rounded off sample_03's elongated fibres — R14/**R29** |
 | `remove_scalebar` | True | detect + inpaint the "200 nm" ruler, but only in clean background — R22/R12 |
 
 Note: the remaining px values (`speckle_min`, `close_fiber`, `myelin_close`,

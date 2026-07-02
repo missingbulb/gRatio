@@ -113,10 +113,13 @@ DEFAULTS = dict(
     fiber_smooth_frac=0.2,    # smooth the fibre outer bound (open then close) by this fraction of the
                               # axon radius, so it is a clean rounded envelope like a hand tracing
                               # instead of a spiky outline that reaches into the extracellular space
-    border_smooth_tol=0,      # final pass: refit axon+fibre borders as smooth curves within this many px
-                              # (least-squares spline; removes pixel staircase without shrinking). 0 = off.
-                              # Off by default: the morphological smoothing already gives clean rounded
-                              # borders, and the extra spline refit cost a little IoU on the hand masks.
+    border_smooth_tol=2.0,    # final pass: refit the INNER (axon) border as a smooth spline within this
+                              # many px (least-squares periodic spline; removes the pixel staircase
+                              # without shrinking). Larger tol -> fewer control points -> smoother.
+    border_smooth_tol_fiber=0.5,  # SEPARATE, tighter tol for the OUTER (fibre) border -> many more
+                              # control points, so its longer/undulating outline is de-staircased
+                              # without the shape-rounding that a shared (axon) tol caused on sample_03.
+                              # None -> use border_smooth_tol.
     border_min_radius=6.0,    # ...but do not refit a region whose equivalent radius is below this (px)
     bubble_min_frac=0.02,     # a hole counts as a bubble if >= this fraction of the axon
     bubble_min_px=250,        # ...and at least this many pixels
@@ -666,14 +669,20 @@ def segment(gray: np.ndarray, **overrides) -> dict:
             a['area'], a['myelin_area'] = A_ax, A_my
             a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
 
-    # final polish: refit each axon + fibre border as a smooth curve (vector-like,
-    # hand-tracing look) without shrinking; bubbles stay excluded from myelin.
+    # final polish: refit each axon + fibre border as a smooth spline curve (vector-like,
+    # hand-tracing look) without shrinking; bubbles stay excluded from myelin. The OUTER
+    # (fibre) border gets a SEPARATE, tighter tolerance than the inner (axon) one: the
+    # spline's control-point count grows as the tolerance shrinks (knots satisfy sum of
+    # squared residuals <= n*tol^2), and the myelin outline is longer and more undulating
+    # than the compact axon body, so it needs many more curves to smooth the pixel
+    # staircase without rounding off real shape (as one shared tolerance did to sample_03).
     if P['border_smooth_tol'] > 0 and axons:
         sa = np.zeros((H, W), np.int32)
         sf = np.zeros((H, W), np.int32)
+        ftol = P['border_smooth_tol_fiber'] or P['border_smooth_tol']
         for a in axons:
             fs = fit_smooth_border(fiber_mask == a['id'],
-                                   P['border_smooth_tol'], P['border_min_radius'])
+                                   ftol, P['border_min_radius'])
             as_ = fit_smooth_border(axon_mask == a['id'],
                                     P['border_smooth_tol'], P['border_min_radius']) & fs
             sf[fs] = a['id']
