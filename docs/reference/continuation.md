@@ -90,4 +90,16 @@ tests/                    test_evaluate.py (segmentation+GT+scalebar+border),
                           test_mask_extract.py, test_reference.py, test_synthetic.py
 docs/reference/requirements.md   the owner's requirements (start here)
 docs/reference/user_masks.md     full method narrative + per-sample results
+docs/reference/assumptions.md    registry of biological/equipment assumptions (A-*) + failure modes
 ```
+
+## Biological vs image-processing assumptions
+
+Choices that encode a **specimen/microscope prior** (not pure image processing)
+are registered in [`assumptions.md`](assumptions.md) and tagged inline in
+`pipeline.py` as `# BIOLOGICAL ASSUMPTION [A-*]`. With only 3 learning images,
+some of these are thinly supported (esp. `A-ISOLATED-TIGHTER`, one axon). When a
+new sample looks wrong, check that registry first. The ridge-guided outer-boundary
+refinement (`membrane_outer_boundary`, `A-MYELIN-LAMELLAR`) is implemented but
+**OFF by default**: on the current set it trims real compact myelin through
+lamella gaps (net ≈ −0.003), so it waits for data with clearer lamellae.

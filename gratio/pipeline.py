@@ -51,7 +51,8 @@ these TEM samples). Inverted-contrast (e.g. SEM) data needs a polarity step.
 from __future__ import annotations
 import cv2
 import numpy as np
-from scipy.ndimage import binary_fill_holes, distance_transform_edt, label as cc_label
+from scipy.ndimage import (binary_fill_holes, binary_propagation,
+                           distance_transform_edt, label as cc_label)
 from scipy.interpolate import splprep, splev
 
 # Default parameters. Override per call via segment(..., **overrides).
@@ -127,6 +128,13 @@ DEFAULTS = dict(
                               # thickness. One scale-free rule for every fibre (replaces the R19
                               # per-pocket enclosure heuristic, which was tuned to one sample and
                               # over-reached on the others). 0 = off.
+    membrane_outer_boundary=False,  # OPT-IN: trim outer over-reach past the outermost myelin
+                              # lamella (ridge-guided flood). OFF by default -- relies on the
+                              # biological A-MYELIN-LAMELLAR assumption (concentric resolvable
+                              # lamellae) and on the current 3-image set it trims real compact
+                              # myelin through lamella gaps (net ~ -0.003 IoU). See
+                              # docs/reference/assumptions.md before enabling on new data.
+    membrane_ridge_thr=0.12,  # ridge strength (meijering+sato, 0..1) counted as a lamella barrier
     fill_edge_holes=True,     # fill vacuoles cut open by the IMAGE EDGE: a bright pocket enclosed
                               # by myelin on its visible sides but touching the border cannot be
                               # closed by binary_fill_holes; reflect-pad handles it. Only affects
@@ -269,6 +277,46 @@ def _peel_axon(gf, fiber, cx, cy, bias, k):
     return _smooth(axon, k) & F
 
 
+def _refine_outer_membrane(gf, axon_mask, myelin_mask, fiber_mask, myelin_mat, P):
+    """Trim fibre over-reach that lies BEYOND the outermost myelin membrane.
+
+    # BIOLOGICAL ASSUMPTION [A-MYELIN-LAMELLAR] -- see docs/reference/assumptions.md
+    # The myelin sheath is a stack of concentric membranes (lamellae) that render as
+    # ridges; genuine extracellular space is reachable from outside the fibre WITHOUT
+    # crossing a lamella. So we flood inward from the background, blocked by ridge
+    # (meijering+sato) and dark-myelin barriers -- any fibre area the flood reaches
+    # lies past the outermost membrane and is trimmed as over-reach. This FAILS when
+    # the myelin has no resolvable lamellae (immature/compact-only myelin, or too low
+    # magnification): with no ridge barrier the flood leaks into real myelin. That is
+    # why this refinement is OFF by default (membrane_outer_boundary=False); on the
+    # current 3-image set it trims real compact myelin through lamella gaps.
+
+    Opt-in (needs scikit-image); returns possibly-trimmed (axon, myelin, fiber) masks.
+    """
+    try:
+        from skimage.filters import meijering, sato
+    except Exception:
+        return axon_mask, myelin_mask, fiber_mask
+    x = gf.astype(np.float32)
+    b = cv2.bilateralFilter(gf, 9, 75, 75).astype(float) / 255.0
+
+    def _n(a):
+        lo, hi = np.percentile(a, [1, 99]); hi = hi if hi > lo else lo + 1
+        return np.clip((a - lo) / (hi - lo), 0, 1)
+    M = np.maximum(_n(meijering(b, sigmas=range(1, 6), black_ridges=True)),
+                   _n(sato(b, sigmas=range(1, 6), black_ridges=True)))
+    ridges = cv2.dilate((M > P['membrane_ridge_thr']).astype(np.uint8),
+                        np.ones((3, 3), np.uint8), iterations=2) > 0
+    barrier = myelin_mat | ridges | (axon_mask > 0)
+    fib = fiber_mask > 0
+    outside = (~fib) & (~barrier)
+    flooded = binary_propagation(outside, mask=~barrier)
+    trim = fib & flooded & (axon_mask == 0)      # bright over-reach past the outer membrane
+    fiber_mask = np.where(trim, 0, fiber_mask)
+    myelin_mask = np.where(trim, 0, myelin_mask)
+    return axon_mask, myelin_mask, fiber_mask
+
+
 def _fill_edge_holes(fm, margin=40):
     """Fill vacuoles that are enclosed by the fibre except where the IMAGE EDGE
     cuts through them. ``binary_fill_holes`` cannot close a hole that touches the
@@ -301,6 +349,9 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     H, W = gray.shape
 
     gf = cv2.bilateralFilter(gray, *P['bilateral'])
+    # BIOLOGICAL ASSUMPTION [A-MYELIN-DARK] -- see docs/reference/assumptions.md:
+    # myelin is the darkest tissue (osmium-stained TEM). The whole threshold-based
+    # detection assumes this polarity; inverted-contrast modalities need `255 - image`.
     T = float(np.percentile(gf, P['myelin_percentile']))
     myel = (gf < T).astype(np.uint8)
 
@@ -327,7 +378,10 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     km = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['myelin_close'],) * 2)
     myelin_mat = cv2.morphologyEx(myel_fill, cv2.MORPH_CLOSE, km) > 0
 
-    # candidate axon compartments = regions separated by the sealed myelin
+    # candidate axon compartments = regions separated by the sealed myelin.
+    # BIOLOGICAL ASSUMPTION [A-AXON-CONVEX-BRIGHT] -- see docs/reference/assumptions.md:
+    # an axon body is a bright, roughly convex compartment above a size floor
+    # (min_axon_frac / min_solidity / bright_margin below).
     sep = enclosed & ~mc.astype(bool)
     minA, maxA = P['min_axon_frac'] * H * W, P['max_axon_frac'] * H * W
     bright_thr = np.median(gf) + P['bright_margin']
@@ -393,6 +447,8 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         d = dist[uncapped & (nearest == i)]           # thickness from the plain Voronoi ring
         thick = float(np.median(d)) if d.size else 0.0
         thick_by[i] = thick
+        # BIOLOGICAL ASSUMPTION [A-ISOLATED-TIGHTER] -- see docs/reference/assumptions.md
+        # (calibrated on ONE isolated axon; the weakest-supported number here).
         # An axon whose nearest neighbour is many myelin-thicknesses away is ISOLATED:
         # its myelin faces open extracellular space, where dark adjacent tissue can be
         # taken for myelin with no neighbouring axon to arbitrate the boundary. Such an
@@ -412,6 +468,7 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         mult = P['myelin_thickness_mult'] + t * (P['myelin_thickness_mult_isolated'] - P['myelin_thickness_mult'])
         cap_by[i] = mult * thick
 
+    # BIOLOGICAL ASSUMPTION [A-SHEATHS-MEET-BY-THICKNESS] -- see docs/reference/assumptions.md.
     # Thickness-weighted territory: two touching fibres' sheaths meet in proportion to
     # their myelin thickness, NOT at the equidistant midline. Assign each pixel to the
     # axon minimising (distance / that axon's own measured thickness), so a thin-myelin
@@ -507,6 +564,16 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         axon_mask, fiber_mask = sa, sf
         myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble,
                                fiber_mask, 0)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            a['area'], a['myelin_area'] = A_ax, A_my
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
+
+    # OPT-IN outer-membrane refinement (default off; see A-MYELIN-LAMELLAR).
+    if P['membrane_outer_boundary'] and axons:
+        axon_mask, myelin_mask, fiber_mask = _refine_outer_membrane(
+            gf, axon_mask, myelin_mask, fiber_mask, myelin_mat, P)
         for a in axons:
             A_ax = int((axon_mask == a['id']).sum())
             A_my = int((myelin_mask == a['id']).sum())
