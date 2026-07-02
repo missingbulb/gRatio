@@ -126,9 +126,9 @@ no false positives**, then maximise class overlap.
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
 | sample_01  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.79 | 0.90 | 1.00 / 1.00 |
+| sample_02  | 0.96 | 0.84 | 0.93 | 1.00 / 1.00 |
 | sample_03  | 0.92 | 0.78 | 0.93 | 1.00 / 1.00 |
-| **mean**   | **0.94** | **0.80** | **0.93** | **1.00 / 1.00** |
+| **mean**   | **0.94** | **0.81** | **0.94** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -245,10 +245,32 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    cluster (sample_03 myelin −0.03) but is a clear net gain and attacks the true
    ceiling rather than the cap.
 
+8. *Isolated axons over-reach into open extracellular space* (R22). sample_02 is
+   a lone axon; 88 % of its myelin error was outer-side over-reach (52 k px) into
+   dark adjacent tissue that connects to its myelin and is *texturally identical*
+   to it — brightness, structure-tensor coherence, fine-scale texture, and even a
+   radial-lamellar-organization score all fail to separate the two (verified
+   pixel-wise; the same features flip sign on sample_01, whose over-reach is
+   adjacent *real* myelin). So local appearance cannot cut it. What separates the
+   two samples is structural, not local: sample_02's myelin faces open space on
+   all sides with no neighbouring axon to bound it, whereas sample_01/03 are
+   touching clusters whose thick myelin is genuinely bounded by neighbours. Fix:
+   an axon whose nearest neighbour is more than `isolation_ratio`=8 of its own
+   measured myelin thicknesses away is treated as **isolated** and uses a tighter
+   cap (`myelin_thickness_mult_isolated`=1.8) instead of the clustered default
+   (2.5); the test is scale-free (a ratio to the axon's own thickness). Isolation
+   is cleanly separable on this data (clustered axons sit at neighbour-ratio ≤ 6,
+   sample_02 at ∞). Gain: sample_02 myelin 0.79 → 0.84, fibre 0.90 → 0.93;
+   sample_01/03 unchanged (they stay clustered). A per-*pixel* open-vs-corridor
+   variant was tried and rejected: sample_01's open-facing myelin is itself thick,
+   so a tight open-side cap starved it — the decision must be per-axon, not
+   per-pixel.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=42`, `myelin_thickness_mult=2.5`, `min_axon_frac=0.02`,
+`myelin_fill_percentile=42`, `myelin_thickness_mult=2.5`,
+`myelin_thickness_mult_isolated=1.8`, `isolation_ratio=8`, `min_axon_frac=0.02`,
 `enclose_outer_vacuoles=True`; the thresholds are calibrated against this ground
-truth but the outer-myelin cap is now scale-free and prior-free.
+truth but the outer-myelin cap is scale-free and prior-free.
 
 **Known residual limits:**
 - An isolated fibre's outer bound rests on the measured-thickness cap, not on an

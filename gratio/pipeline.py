@@ -86,6 +86,13 @@ DEFAULTS = dict(
                               # residual assumption is intra-fibre: the outer boundary is within a
                               # few ring-thicknesses of the axon (a wedge ballooning many-fold is a
                               # neighbour bleeding in, not this fibre's myelin).
+    myelin_thickness_mult_isolated=1.8,  # tighter cap for an ISOLATED axon (see isolation_ratio):
+                              # its myelin faces open extracellular space on all sides, where dark
+                              # adjacent tissue looks like myelin and no neighbouring axon bounds it,
+                              # so the band must not run past the axon's own uniform ring thickness.
+    isolation_ratio=8.0,      # an axon is 'isolated' if its nearest neighbouring axon is more than
+                              # this many of its OWN myelin thicknesses away (scale-free). Below this
+                              # the axon is treated as clustered and keeps myelin_thickness_mult.
     myelin_band=None,         # optional ABSOLUTE ceiling as a fraction of axon radius; None = off.
                               # Only useful to hard-limit a dataset where the measured-thickness cap
                               # is not enough (e.g. inverted-contrast SEM tuning in reference_run.py).
@@ -397,7 +404,21 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         r_by[a['id']] = a['r']
         d = dist[uncapped & (nearest == a['id'])]
         thick = float(np.median(d)) if d.size else 0.0
-        cap_by[a['id']] = P['myelin_thickness_mult'] * thick
+        # An axon whose nearest neighbour is many myelin-thicknesses away is ISOLATED:
+        # its myelin faces open extracellular space, where dark adjacent tissue can be
+        # taken for myelin with no neighbouring axon to arbitrate the boundary. Such an
+        # axon uses a tighter cap. A clustered axon keeps the generous cap for its
+        # genuinely thick shared walls (which the neighbour, not the cap, bounds). The
+        # isolation test is scale-free -- a ratio of the neighbour distance to this
+        # axon's own measured thickness, not a pixel threshold.
+        if len(cands) > 1 and thick > 0:
+            dt_other = distance_transform_edt(axon_lbl != a['id'])
+            dmin = float(dt_other[(axon_lbl > 0) & (axon_lbl != a['id'])].min())
+            isolated = dmin > P['isolation_ratio'] * thick
+        else:
+            isolated = len(cands) == 1
+        mult = P['myelin_thickness_mult_isolated'] if isolated else P['myelin_thickness_mult']
+        cap_by[a['id']] = mult * thick
     band_cap = cap_by[nearest]
     if P.get('myelin_band'):                     # optional absolute ceiling (usually off)
         band_cap = np.minimum(band_cap, P['myelin_band'] * r_by[nearest])

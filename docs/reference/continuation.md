@@ -10,8 +10,8 @@ Current agreement (`evaluate_segmentation.py`, means over the 3 TEM samples):
 | metric | value |
 |--------|-------|
 | axon IoU   | 0.94 |
-| myelin IoU | 0.80 |
-| fibre IoU  | 0.93 |
+| myelin IoU | 0.81 |
+| fibre IoU  | 0.94 |
 | detection precision / recall | **1.00 / 1.00** |
 
 (Baseline before any tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
