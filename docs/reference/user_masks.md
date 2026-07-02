@@ -125,10 +125,10 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
+| sample_01  | 0.92 | 0.87 | 0.95 | 1.00 / 1.00 |
 | sample_02  | 0.96 | 0.84 | 0.93 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.78 | 0.93 | 1.00 / 1.00 |
-| **mean**   | **0.94** | **0.81** | **0.94** | **1.00 / 1.00** |
+| sample_03  | 0.92 | 0.79 | 0.94 | 1.00 / 1.00 |
+| **mean**   | **0.94** | **0.83** | **0.94** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -266,11 +266,37 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
    so a tight open-side cap starved it — the decision must be per-axon, not
    per-pixel.
 
+9. *Bubbles, edge-cut vacuoles, over-tight cluster cap* (R23, from owner review).
+   Three targeted fixes: (a) `detect_bubbles` now defaults **False** — the hand
+   tracing counts intramyelin vacuoles inside the myelin (their exclusion is a
+   deferred stage), so keeping them lifts sample_01 myelin 0.82 → 0.87; (b)
+   `fill_edge_holes` closes a bright vacuole that is enclosed by myelin on its
+   visible sides but touches the image edge (`binary_fill_holes` cannot close a
+   border-touching hole) via reflection-padding — fixes the hole in sample_01 #3's
+   myelin near the left border; (c) the clustered cap was restored 2.5 → 3.0 now
+   that isolated axons are separately capped (R22), recovering some of sample_03
+   #5's outer myelin. Net mean myelin 0.81 → 0.83.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
-`myelin_fill_percentile=42`, `myelin_thickness_mult=2.5`,
-`myelin_thickness_mult_isolated=1.8`, `isolation_ratio=8`, `min_axon_frac=0.02`,
-`enclose_outer_vacuoles=True`; the thresholds are calibrated against this ground
-truth but the outer-myelin cap is scale-free and prior-free.
+`myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
+`myelin_thickness_mult_isolated=1.8`, `isolation_ratio=8`, `detect_bubbles=False`,
+`fill_edge_holes=True`, `min_axon_frac=0.02`, `enclose_outer_vacuoles=True`; the
+thresholds are calibrated against this ground truth but the outer-myelin cap is
+scale-free and prior-free.
+
+**Still open after R23 (owner-review items not fully solved):**
+- *sample_02 bottom corner under-reach.* The isolated cap is a single uniform
+  radial distance; at a convex axon corner the true myelin reaches a larger
+  distance-to-axon than on the flat sides, so a uniform cap that stops the top
+  over-reach also clips the bottom corner. Fixing both at once needs a
+  per-location outer-membrane terminator (a bright-gap stop), which was tried and
+  found fragile; deferred.
+- *inner myelin eaten by the axon border* (sample_01 #2 inner arc, sample_03 #5
+  inner). The Otsu peel is already at its best global bias (10); raising it to
+  recover inner myelin over-shrinks sample_03's small axons. Needs a local, not
+  global, inner-border refinement.
+- *shared wall sample_03 #3–#5* partly not dark material, so not recoverable by
+  the cap alone.
 
 **Known residual limits:**
 - An isolated fibre's outer bound rests on the measured-thickness cap, not on an
