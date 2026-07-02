@@ -127,8 +127,8 @@ no false positives**, then maximise class overlap.
 |------------|---------:|-----------:|----------:|:------------:|
 | sample_01  | 0.91 | 0.86 | 0.95 | 1.00 / 1.00 |
 | sample_02  | 0.96 | 0.85 | 0.94 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.80 | 0.94 | 1.00 / 1.00 |
-| **mean**   | **0.93** | **0.83** | **0.94** | **1.00 / 1.00** |
+| sample_03  | 0.92 | 0.81 | 0.95 | 1.00 / 1.00 |
+| **mean**   | **0.93** | **0.84** | **0.95** | **1.00 / 1.00** |
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -295,14 +295,46 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     0.83 → 0.83 (steady) but sample_02/03 up and the pipeline is free of
     one-sample special-casing.
 
+11. *Thickness-weighted territory fixes 'tentacles'* (R25, owner review). The
+    myelin shared between two touching fibres was split at the **equidistant**
+    nearest-axon (Voronoi) midline. But two sheaths meet in proportion to their
+    thickness, so a small thin-myelin axon wrongly claimed half of a wall it
+    shares with a large thick-myelin fibre — producing 'tentacles' of the small
+    fibre's colour reaching toward the large one (sample_01 #1/#3/#4 → #2). Fix:
+    assign each pixel to the axon minimising **distance ÷ that axon's own measured
+    myelin thickness**, so the thick-myelin fibre owns most of a shared wall.
+    Verified against the structure tensor: in the tentacle regions the lamellae
+    are actually concentric with the *near* axon, i.e. it is genuinely a shared
+    wall being mis-split, not over-reach into empty space. Gain: sample_01 myelin
+    0.86 → 0.86 (steady, but the assignment now matches GT's structure),
+    sample_03 0.80 → 0.81, fibre 0.94 → 0.95; tentacles removed.
+
+    *Multi-detector border study* (owner suggestion). Re-ran the 12-detector survey
+    and measured each detector's response on lamellar myelin vs the amorphous
+    over-reach: **meijering + sato ridge filters light up the myelin sheaths as
+    bright concentric rings** and are near-zero on extracellular matrix (see
+    `outputs/borders/`). They are excellent for *visualising/validating* the
+    sheaths, but pixel-gating the mask by them erodes real myelin (the compact
+    myelin *between* lamellae is dark in a ridge map), so they cannot define the
+    mask directly. Their best use — snapping the outer boundary to the outermost
+    concentric ridge — is the proposed next step for the residual open-side
+    over/under-reach (below).
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
 `myelin_thickness_mult_isolated=1.8`, `isolation_ramp=(7,13)`,
 `fiber_vacuole_close_frac=1.0`, `detect_bubbles=False`, `fill_edge_holes=True`,
-`min_axon_frac=0.02`; every outer-myelin rule scales with each axon's own measured
-thickness (no pixel constant, no axon-radius/g-ratio prior), and the only cap
-value calibrated on a single isolated example (`myelin_thickness_mult_isolated`)
-is documented as such.
+`min_axon_frac=0.02`; territory is thickness-weighted and every outer-myelin rule
+scales with each axon's own measured thickness (no pixel constant, no
+axon-radius/g-ratio prior). The only cap value calibrated on a single isolated
+example (`myelin_thickness_mult_isolated`) is documented as such.
+
+**Residual, needing a per-side (not global) outer boundary:**
+- On an *open* extracellular-facing arc a fibre can over-reach (sample_03 #2,
+  sample_02 top) while on a *corner/edge* arc it under-reaches (sample_03 #5,
+  sample_02 bottom) — opposite errors a single radial cap cannot fix at once.
+  The membrane ridge map (meijering/sato) marks the true outer sheath and is the
+  intended tool: terminate the band at the outermost concentric ridge per angle.
 
 **Still open after R23 (owner-review items not fully solved):**
 - *sample_02 bottom corner under-reach.* The isolated cap is a single uniform

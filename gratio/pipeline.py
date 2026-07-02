@@ -383,11 +383,16 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     r_by = np.zeros(len(cands) + 1)
     cap_by = np.zeros(len(cands) + 1)
     thick_by = np.zeros(len(cands) + 1)
+    ids = [a['id'] for a in cands]
+    # per-axon distance transforms (reused for the isolation test, the thickness-
+    # weighted territory, and the cap -- one transform per axon, not per use)
+    dist_by = {i: distance_transform_edt(axon_lbl != i) for i in ids}
     for a in cands:
-        r_by[a['id']] = a['r']
-        d = dist[uncapped & (nearest == a['id'])]
+        i = a['id']
+        r_by[i] = a['r']
+        d = dist[uncapped & (nearest == i)]           # thickness from the plain Voronoi ring
         thick = float(np.median(d)) if d.size else 0.0
-        thick_by[a['id']] = thick
+        thick_by[i] = thick
         # An axon whose nearest neighbour is many myelin-thicknesses away is ISOLATED:
         # its myelin faces open extracellular space, where dark adjacent tissue can be
         # taken for myelin with no neighbouring axon to arbitrate the boundary. Such an
@@ -398,18 +403,32 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         # clustered and isolated values rather than flipping at a hard threshold, so two
         # near-identical axons near the boundary are not treated very differently.
         if len(cands) > 1 and thick > 0:
-            dt_other = distance_transform_edt(axon_lbl != a['id'])
-            ratio = float(dt_other[(axon_lbl > 0) & (axon_lbl != a['id'])].min()) / thick
+            other = (axon_lbl > 0) & (axon_lbl != i)
+            ratio = float(dist_by[i][other].min()) / thick
         else:
             ratio = np.inf                       # lone axon in the field
         lo, hi = P['isolation_ramp']
         t = float(np.clip((ratio - lo) / (hi - lo), 0.0, 1.0))   # 0 clustered -> 1 isolated
         mult = P['myelin_thickness_mult'] + t * (P['myelin_thickness_mult_isolated'] - P['myelin_thickness_mult'])
-        cap_by[a['id']] = mult * thick
-    band_cap = cap_by[nearest]
-    if P.get('myelin_band'):                     # optional absolute ceiling (usually off)
-        band_cap = np.minimum(band_cap, P['myelin_band'] * r_by[nearest])
-    assigned = np.where(uncapped & (dist <= band_cap), nearest, 0)
+        cap_by[i] = mult * thick
+
+    # Thickness-weighted territory: two touching fibres' sheaths meet in proportion to
+    # their myelin thickness, NOT at the equidistant midline. Assign each pixel to the
+    # axon minimising (distance / that axon's own measured thickness), so a thin-myelin
+    # small axon cannot claim half of a wall it shares with a thick-myelin neighbour --
+    # that equidistant split was what produced 'tentacles' of a small fibre's myelin
+    # reaching toward a larger one. Falls back to plain nearest when thicknesses are equal.
+    eps = 1e-3
+    wscore = np.stack([dist_by[i] / max(thick_by[i], eps) for i in ids], 0)
+    oidx = np.argmin(wscore, 0)
+    owner = np.array(ids)[oidx]                       # per-pixel owning axon (always > 0)
+    d_owner = np.take_along_axis(np.stack([dist_by[i] for i in ids], 0), oidx[None], 0)[0]
+    cap_at = np.zeros_like(d_owner)
+    for pos, i in enumerate(ids):
+        cap_at[owner == i] = cap_by[i]
+        if P.get('myelin_band'):                      # optional absolute ceiling (usually off)
+            cap_at[owner == i] = min(cap_by[i], P['myelin_band'] * r_by[i])
+    assigned = np.where(uncapped & (d_owner <= cap_at), owner, 0)
 
     axon_mask = np.zeros((H, W), np.int32)
     myelin_mask = np.zeros((H, W), np.int32)
@@ -417,7 +436,7 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     bubble = np.zeros((H, W), bool)
     axons = []
     for a in cands:
-        terr = (nearest == a['id']) | (nearest == 0)   # Voronoi territory (split touching fibers)
+        terr = owner == a['id']              # thickness-weighted territory (split touching fibers)
         k = min(a['r'] * P['smooth_frac'], P['smooth_max_px'])
         fm = _smooth(binary_fill_holes(a['body'] | (assigned == a['id'])) & terr, k)
         # smooth the fibre outer bound into a clean rounded envelope: open removes
