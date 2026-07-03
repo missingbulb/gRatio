@@ -97,9 +97,10 @@ raw `analyze.py` overlay. Format spec: `docs/reference/working_process.md`.
 | `sample_02.png` | 871×844 | single healthy axon, thick concentric myelin (the clean parity case). |
 | `sample_03.png` | 482×505 | 5-axon touching cluster, thin myelin. |
 
-Current pipeline g-ratios (axon-id order): s01 ≈ 0.67/0.64/0.60/0.75, s02 ≈ 0.69,
-s03 ≈ 0.82/0.68/0.72/0.85/0.65. Segmentation vs GT means ≈ axon 0.94 / myelin 0.86 /
-fibre 0.96, detection 1.00/1.00 (means after R31/R32; see user_masks.md).
+Current pipeline g-ratios (axon-id order): s01 ≈ 0.67/0.64/0.60/0.75, s02 ≈ 0.70
+(lamella-trimmed; 0.69 pre-trim), s03 ≈ 0.82/0.68/0.72/0.85/0.65. Segmentation vs GT
+means ≈ axon 0.94 / myelin 0.86 / fibre 0.96, detection 1.00/1.00 (means after
+R31/R32 + the single-neuron lamella trim R34; see user_masks.md).
 Phase-3 omit on s01 ≈ IoU 0.64, recall 0.69, precision 0.90.
 
 ## Ground truth — how it works (READ before touching it)
@@ -134,6 +135,13 @@ Gotcha: translucent fills overlap the pen in *hue* but separate by *saturation*
   targets recall = 1.0, no false positives, then maximises IoU.
 - Borders are **smooth, roughly-closed** shapes (hand-tracing look), not pixel
   staircases and not strict ovals.
+- **Record cross-domain applicability out-of-band.** When a sub-phase plausibly
+  applies to another neurobiology problem (e.g. the lamella tracer → membrane
+  reconstruction / myelin-compaction readouts), note it as a **pointer** in
+  `docs/reference/neurobiology_applications.md` — a direction, need not be certain.
+  **Keep it out of the algorithm body**: code and inline comments stay strictly
+  about the g-ratio task and its `A-*` assumptions. Add an entry whenever you build
+  or substantially change a sub-phase.
 
 ## Where the deep rationale lives
 
@@ -146,6 +154,11 @@ Gotcha: translucent fills overlap the pen in *hue* but separate by *saturation*
 - `docs/reference/assumptions.md` — modelling assumptions (A-MYELIN-DENSE, etc.).
 - `docs/reference/gt_from_masks.md` — how to make GT from a masked PDF.
 - `docs/reference/myeltracer_notes.md` — relation to the MyelTracer reference.
+- `docs/reference/neurobiology_applications.md` — what we're building + **pointers**
+  to where individual sub-phases might apply to other neurobiology problems (the
+  out-of-band home for that speculation; see the Design-principles rule).
+- `docs/reference/lamella_continuation.md` — the lamella-tracing outer-boundary
+  refinement (`gratio/lamella.py`, single-neuron images): method, evidence, standing.
 
 ## Git
 

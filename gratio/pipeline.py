@@ -54,6 +54,7 @@ import numpy as np
 from scipy.ndimage import (binary_propagation,
                            distance_transform_edt, label as cc_label)
 from scipy.interpolate import splprep, splev
+from .lamella import lamella_trim_outer   # optional single-fibre outer-boundary refinement
 
 # Default parameters. Override per call via segment(..., **overrides).
 DEFAULTS = dict(
@@ -174,6 +175,21 @@ DEFAULTS = dict(
                               # myelin through lamella gaps (net ~ -0.003 IoU). See
                               # docs/reference/assumptions.md before enabling on new data.
     membrane_ridge_thr=0.12,  # ridge strength (meijering+sato, 0..1) counted as a lamella barrier
+    lamella_trim_outer=True,   # ON, but self-gated to a SINGLE detected neuron: pull a lone fibre's
+                              # outer over-reach INWARD to the outermost traced myelin lamella (the
+                              # owner's line-detection method, trim-only; see gratio/lamella.py). Relies
+                              # on A-MYELIN-LAMELLAR-CONTINUOUS; no-ops (returns unchanged) without
+                              # scikit-image or on any image with >1 neuron. On sample_02 (the lone
+                              # fibre) it trims the documented outer over-reach and STACKS on the R31 cap
+                              # re-sweep (myelin_thickness_mult_isolated 1.8->1.4): myelin IoU 0.883 ->
+                              # 0.897 (the 1.4 isotropic cap can't remove this anisotropic over-reach),
+                              # g 0.688 -> 0.696. See docs/reference/lamella_continuation.md.
+    lamella_band_frac=0.3,    # pull in to the outermost lamella within this fraction of the fibre's
+                              # OWN measured myelin thickness (scale-free); > ~0.4 starts over-trimming
+                              # to an inner lamella (FP falls but FN rises past the gain -- see the doc).
+    lamella_ridge_pct=80,     # ridge-response percentile kept as candidate lamella pixels
+    lamella_min_len=14,       # min traced-fragment arc length (px) -- drops speckle
+    lamella_max_tort=1.35,    # max tortuosity (arc-length / end-to-end) -- drops blobby non-line skeletons
     fill_edge_holes=True,     # fill vacuoles cut open by the IMAGE EDGE: a bright pocket enclosed
                               # by myelin on its visible sides but touching the border cannot be
                               # closed by binary_fill_holes; reflect-pad handles it. Only affects
@@ -937,6 +953,14 @@ def segment(gray: np.ndarray, **overrides) -> dict:
         dense = cv2.boxFilter(dark, -1, (int(P['dense_extend_win']),) * 2) > P['dense_extend_thr']
         axon_mask, myelin_mask, fiber_mask = _fill_junction_myelin(
             axon_mask, myelin_mask, fiber_mask, dense, axons, P)
+        myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
+        _recompute_areas(axons, axon_mask, myelin_mask)
+
+    # Lamella trim (single detected neuron only; see A-MYELIN-LAMELLAR-CONTINUOUS and
+    # gratio/lamella.py). Runs before the spline refit so the trimmed outer boundary is
+    # smoothed like every other border. A strict no-op when >1 neuron is detected.
+    if P['lamella_trim_outer'] and axons:
+        axon_mask, fiber_mask = lamella_trim_outer(gray, axon_mask, fiber_mask, axons, P)
         myelin_mask = np.where((fiber_mask > 0) & (axon_mask == 0) & ~bubble, fiber_mask, 0)
         _recompute_areas(axons, axon_mask, myelin_mask)
 

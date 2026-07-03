@@ -49,6 +49,7 @@ Per-sample error maps + the sample_02 "why geometry can't win" evidence:
 5. **inner border** refined per fibre by an Otsu **peel** (`axon_otsu_bias`) + smoothing (`axon_smooth_frac`).
 6. **dense-dark extension** (`dense_extend`, A-MYELIN-DENSE) follows the solid dark sheath outward past the cap where it ends in neuropil; **junction fill** (`junction_fill`, A-JUNCTION-MYELIN) reclaims dense-dark myelin trapped between two clustered fibres (a strict no-op for isolated fibres).
 7. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
+7b. **lamella trim** (`lamella_trim_outer`, A-MYELIN-LAMELLAR-CONTINUOUS; `gratio/lamella.py`) — on a **single-neuron** image only, pull the lone fibre's outer over-reach inward to the outermost traced lamella (trim-only). Strict no-op otherwise.
 8. **final border refit** as least-squares smooth curves (`border_smooth_tol`/`border_smooth_tol_fiber`, `border_min_radius`).
 9. **Phase 3 — non-myelin pockets** (`detect_nonmyelin`, A-NONMYELIN-BRIGHT): bright vacuoles/splits inside the band (the tracer's orange *omit* regions) that survive a thickness-scaled opening are excluded from `A_myelin`; each pocket boundary is spline-smoothed (`nonmyelin_smooth_tol`) like the axon/fibre borders; a per-fibre cap (`nonmyelin_max_frac`) bounds removal. Returned as `seg['nonmyelin']`.
 
@@ -85,6 +86,20 @@ fine-tuned model), gated to isolated fibres only. Full analysis, recreation
 routes, and the concrete next experiment are in
 [`learned_outer_boundary.md`](learned_outer_boundary.md). Reproduce the evidence
 with `python diag_s02_boundary.py` / `diag_s02_capsweep.py` / `diag_s02_diff.py`.
+
+**Complementary classical route — implemented, ON for single-neuron images
+(`gratio/lamella.py`).** The owner's line-detection + extend-&-trim algorithm was
+evaluated against this same wall. Tracing the myelin **lamellae** as ridge
+polylines and pulling a lone fibre's over-reach **inward** to the outermost lamella
+(trim-only) **stacks on the R31 cap re-sweep**: on top of the tighter 1.4 isotropic
+cap (baseline 0.883) it trims sample_02 to myelin IoU **0.897** (+0.014; mean myelin
+0.856 → **0.861**, g 0.688 → 0.696), because 1.4 is the tightest *isotropic* cap and
+the residual over-reach is anisotropic. `lamella_trim_outer=True` by default but a
+**strict no-op unless exactly one neuron is detected**, so the multi-neuron samples
+01/03 are byte-identical. The residual shared-wall over-reach still wants the
+learned route above. Full analysis (incl. the four local selection cues that hit the
+FP↔FN wall) and reproduction: [`lamella_continuation.md`](lamella_continuation.md) /
+`python diag_lamella_trace.py`.
 
 ## Open items (see requirements.md for the full list)
 

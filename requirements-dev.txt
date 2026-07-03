@@ -1,2 +1,5 @@
 -r requirements.txt
 pytest>=7.0
+scikit-image>=0.22   # ridge filters (frangi/sato/meijering) + skeletonize for the opt-in
+                     # outer-boundary refinements (membrane_outer_boundary, lamella_trim_outer)
+                     # and the border/lamella diagnostics; the pipeline no-ops without it.

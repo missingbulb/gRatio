@@ -99,6 +99,35 @@ def test_scalebar_detection_and_safety():
     assert len(segment(s2)["axons"]) == 1
 
 
+def test_lamella_trim_is_gated_and_trim_only():
+    """The opt-in lamella outer trim (A-MYELIN-LAMELLAR-CONTINUOUS): a strict
+    no-op on clustered fibres (isolated-only gate), and trim-only on the isolated
+    fibre -- it never grows the outer boundary and keeps recall + the inner border."""
+    pytest.importorskip("skimage")   # the trim traces ridges; no-ops without scikit-image
+    from gratio import segment
+    # clustered samples: the single-neuron gate excludes them, so on == off (and the
+    # default-ON trim leaves multi-neuron images untouched)
+    for s in ["sample_01", "sample_03"]:
+        raw = cv2.imread(os.path.join(RAW, s + ".png"), cv2.IMREAD_GRAYSCALE)
+        off = segment(raw, lamella_trim_outer=False)
+        on = segment(raw, lamella_trim_outer=True)
+        assert np.array_equal(off["fiber_mask"], on["fiber_mask"])
+        assert np.array_equal(off["axon_mask"], on["axon_mask"])
+        assert np.array_equal(segment(raw)["fiber_mask"], off["fiber_mask"])   # default no-op here
+    # single-neuron sample_02: recall preserved; boundary pulled inward, not outward
+    raw = cv2.imread(os.path.join(RAW, "sample_02.png"), cv2.IMREAD_GRAYSCALE)
+    off = segment(raw, lamella_trim_outer=False)
+    on = segment(raw, lamella_trim_outer=True)
+    assert np.array_equal(segment(raw)["fiber_mask"], on["fiber_mask"])        # default is ON here
+    assert len(on["axons"]) == len(off["axons"]) == 1
+    off_f, on_f = off["fiber_mask"] > 0, on["fiber_mask"] > 0
+    grew = on_f & ~off_f
+    assert grew.sum() < 0.01 * off_f.sum()            # trim-only: essentially no growth
+    assert on_f.sum() < off_f.sum()                   # and it actually trims the over-reach
+    a_on, a_off = (on["axon_mask"] > 0).sum(), (off["axon_mask"] > 0).sum()
+    assert abs(a_on - a_off) < 0.02 * a_off           # inner axon border untouched
+
+
 def test_border_smoothing_is_neutral_and_safe():
     """The fitted-curve border pass smooths without shrinking: recall stays
     perfect and class overlap is within ~1% of the raster version."""
