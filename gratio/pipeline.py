@@ -184,6 +184,9 @@ DEFAULTS = dict(
                               # as 'pockets'. Above it, the band is mis-segmented or its myelin is
                               # itself bright (immature/uneven stain) rather than truly vacuolated, so
                               # removal is skipped for that fibre -- bounding g inflation toward 1.0.
+    nonmyelin_smooth_tol=None,  # refit each pocket boundary as a smooth spline (the regular border
+                              # smoothing) so it reads like a hand tracing, not a pixel staircase.
+                              # None -> reuse border_smooth_tol; 0 -> off (raw pocket boundary).
 )
 
 # Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
@@ -568,12 +571,23 @@ def _detect_nonmyelin_pockets(gf, axon_mask, myelin_mask, axons, P):
             continue
         pockets = np.isin(lab, list(seeds))
         floor = max(P['nonmyelin_min_px'], (P['nonmyelin_min_thick'] * th) ** 2)
+        # refit each pocket boundary as a smooth closed spline curve (our regular
+        # border smoothing), so the pocket reads like a hand tracing instead of a
+        # pixel staircase; area-neutral (no shrink), and kept inside the myelin band.
+        tol = P.get('nonmyelin_smooth_tol')
+        if tol is None:
+            tol = P['border_smooth_tol']
         fib_out = np.zeros((H, W), bool)
         pl, pn = cc_label(pockets)
         for c in range(1, pn + 1):
             cm = pl == c
-            if cm.sum() >= floor:
-                fib_out |= cm
+            if cm.sum() < floor:
+                continue
+            if tol and tol > 0:
+                sm = fit_smooth_border(cm, tol, P['border_min_radius']) & fib_my
+                if sm.any():
+                    cm = sm
+            fib_out |= cm
         # SAFETY VALVE: a genuine pocket is a modest inclusion in the sheath. If the
         # 'pockets' would swallow more than nonmyelin_max_frac of this fibre's myelin,
         # the fibre's band is not really vacuolated -- it is mis-segmented or its myelin

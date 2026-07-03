@@ -46,7 +46,7 @@ Per-sample error maps + the sample_02 "why geometry can't win" evidence:
 6. **dense-dark extension** (`dense_extend`, A-MYELIN-DENSE) follows the solid dark sheath outward past the cap where it ends in neuropil; **junction fill** (`junction_fill`, A-JUNCTION-MYELIN) reclaims dense-dark myelin trapped between two clustered fibres (a strict no-op for isolated fibres).
 7. **fibre outer** smoothed (`fiber_smooth_frac`, open+close); **bubbles** = bright interior gaps excluded from myelin.
 8. **final border refit** as least-squares smooth curves (`border_smooth_tol`/`border_smooth_tol_fiber`, `border_min_radius`).
-9. **Phase 3 — non-myelin pockets** (`detect_nonmyelin`, A-NONMYELIN-BRIGHT): bright vacuoles/splits inside the band (the tracer's orange *omit* regions) that survive a thickness-scaled opening are excluded from `A_myelin`; returned as `seg['nonmyelin']`.
+9. **Phase 3 — non-myelin pockets** (`detect_nonmyelin`, A-NONMYELIN-BRIGHT): bright vacuoles/splits inside the band (the tracer's orange *omit* regions) that survive a thickness-scaled opening are excluded from `A_myelin`; each pocket boundary is spline-smoothed (`nonmyelin_smooth_tol`) like the axon/fibre borders; a per-fibre cap (`nonmyelin_max_frac`) bounds removal. Returned as `seg['nonmyelin']`.
 
 ## The parameters that were tuned against the masks (why they exist)
 

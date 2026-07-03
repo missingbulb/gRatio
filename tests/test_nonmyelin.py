@@ -99,6 +99,22 @@ def test_detector_finds_sample01_pockets():
     assert np.all((seg["fiber_mask"] > 0)[seg["nonmyelin"]])
 
 
+def test_pocket_boundaries_are_smoothed():
+    """Detected pockets get the regular spline border smoothing: the boundary is
+    refit (mask differs from the raw detector output) without changing the area
+    (area-neutral, no shrink), so the g-ratio is unaffected."""
+    raw = _raw("sample_01")
+    on = segment(raw, nonmyelin_smooth_tol=None)   # smoothing on (default)
+    off = segment(raw, nonmyelin_smooth_tol=0)     # raw pocket boundary
+    a_on, a_off = int(on["nonmyelin"].sum()), int(off["nonmyelin"].sum())
+    assert a_on > 0 and a_off > 0
+    assert not np.array_equal(on["nonmyelin"], off["nonmyelin"])   # boundary refit
+    assert abs(a_on - a_off) < 0.05 * a_off                        # area-neutral
+    g_on = {a["id"]: a["g"] for a in on["axons"]}
+    g_off = {a["id"]: a["g"] for a in off["axons"]}
+    assert all(abs(g_on[i] - g_off[i]) < 0.01 for i in g_on)       # g unaffected
+
+
 def test_excluding_pockets_raises_g_and_helps_myelin():
     """Removing non-myelin pockets raises the g-ratio of the affected fibres and
     improves myelin agreement with the omit-corrected ground truth on sample_01;

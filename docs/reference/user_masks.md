@@ -367,7 +367,11 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     raw-data pipeline gains `detect_nonmyelin` (**A-NONMYELIN-BRIGHT**): within each
     fibre's assigned myelin, a region brighter than the dark-myelin threshold that
     survives a morphological opening scaled to that fibre's *own* measured ring
-    thickness is a fat bright pocket and is removed from the band. The opening is
+    thickness is a fat bright pocket and is removed from the band; each pocket
+    boundary then gets the **regular least-squares spline smoothing** (`nonmyelin_smooth_tol`,
+    reusing `border_smooth_tol`) so it reads like a hand tracing, not a pixel
+    staircase — area-neutral, so the g-ratio is unchanged (it even nudges the omit
+    IoU up 0.60→0.61 by matching the smooth hand outline). The opening is
     what makes it generalise: a thick clean sheath (sample_02) or a thin one
     (sample_03) yields **zero** pockets (byte-for-byte unchanged), while sample_01's
     three clear vacuoles are recovered. Result on sample_01: omit IoU 0.60,
