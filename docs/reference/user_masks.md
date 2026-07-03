@@ -434,6 +434,42 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     myelin (a fixed-px opening that catches them removes ~20% of sample_02's
     correctly-un-annotated sheath). Left in conservatively; documented as residual.
 
+15. *Pipeline performance — ~40% faster, output byte-for-byte unchanged* (R33).
+    A profile put the cost in four places; each was replaced by a provably-identical
+    but faster form, so **no** parameter, threshold, or rule changed and the masks /
+    g-ratios / areas are bit-identical (verified by a sha256 fingerprint of every
+    mask + the per-axon `g`/`area`/`myelin_area`/`nonmyelin_area`, plus the 48-test
+    suite and unchanged `evaluate_segmentation` means axon 0.943 / myelin 0.856 /
+    fibre 0.955, detection 1.00/1.00). The four changes: **(a)** `binary_fill_holes`
+    (called ~35×/image; scipy iterates binary erosions to convergence) → a single
+    `cv2.floodFill` from a 1-px-padded border, filling the same border-disconnected
+    background (default 4-connectivity, matched) — ~10× on that op, pixel-identical
+    on a 400-case border-touching/holed battery. **(b)** `_extend_dense_dark`'s
+    per-ray double loop (NS=360 rays × radial march, ~1.45M `round()` calls) →
+    vectorised over all rays with numpy (the inward `rc` scan by `argmax`, the
+    outward march as one vectorised step per radial offset carrying per-ray
+    `last`/`brun`/`hit`/`stopped` state) — `np.round` reproduces Python's
+    round-half-to-even exactly; verified bit-identical to the scalar loop on a
+    300-case fuzz exercising every break branch (out-of-bounds, neighbour-radius,
+    invade, dense, sparse-run-end). **(c)** a `_morph_roi` helper runs each per-fibre
+    `morphologyEx` sequence on a **padded bounding-box crop** (pad = Σ kernel sizes,
+    an upper bound on the ops' Σ(k−1) influence radius; the fibre is the only
+    foreground, so the crop is exact) — applied to `_smooth`, the fibre-envelope
+    open/close, the vacuole close, and the non-myelin opening; the trailing
+    `binary_fill_holes` still runs **full-frame** so hole topology (connectivity to
+    the true image border) is untouched. Verified pixel-identical on a 500-case
+    mixed-op fuzz. **(d)** the post-stage area refresh (four near-identical loops that
+    each rescanned the frame `2k` times via `(mask==id).sum()`) → one `np.bincount`
+    per label image (`_recompute_areas`), identical integer counts. Net: the three
+    samples drop from ≈2388/1249/1217 ms to ≈1330/960/620 ms (sum ≈4.9 s → ≈2.9 s).
+    *Rejected:* cropping the `distance_transform_edt` calls (the next hot spot,
+    ~1.1 s). The safe crop radius is circular — it depends on the very ring thickness
+    the EDT is being used to measure — and a wrong crop boundary would silently
+    change distances (hence the segmentation) for only ~0.2 s of gain; not worth the
+    risk. The two genuinely global ops (`close_fiber`, `myelin_close`) and the
+    smoothing of frame-filling fibres (sample_02's single fibre is 87% of the image)
+    cannot be cropped and are left as-is.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
 `myelin_thickness_mult_isolated=1.4`, `isolation_ramp=(7,13)`,

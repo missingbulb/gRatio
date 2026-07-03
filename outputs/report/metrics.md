@@ -1,7 +1,7 @@
 # Pipeline vs ground truth — per-neuron report
 
 
-## sample_01 — 4 neurons, segment 2428 ms
+## sample_01 — 4 neurons, segment 1260 ms
 
 | neuron (pred~gt) | axon P | axon R | axon px (pred/gt) | myelin P | myelin R | myelin px (pred/gt) | g pred | g GT |
 |---|---|---|---|---|---|---|---|---|
@@ -12,13 +12,13 @@
 
 non-myelin pockets (sample): precision 0.90, recall 0.69 (pred 13414px / gt 17486px)
 
-## sample_02 — 1 neurons, segment 1327 ms
+## sample_02 — 1 neurons, segment 952 ms
 
 | neuron (pred~gt) | axon P | axon R | axon px (pred/gt) | myelin P | myelin R | myelin px (pred/gt) | g pred | g GT |
 |---|---|---|---|---|---|---|---|---|
 | #1 (p1~g1) | 0.99 | 0.97 | 232488/238367 | 0.89 | 0.98 | 258485/234946 | 0.69 | 0.71 |
 
-## sample_03 — 5 neurons, segment 1223 ms
+## sample_03 — 5 neurons, segment 616 ms
 
 | neuron (pred~gt) | axon P | axon R | axon px (pred/gt) | myelin P | myelin R | myelin px (pred/gt) | g pred | g GT |
 |---|---|---|---|---|---|---|---|---|
