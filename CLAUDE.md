@@ -61,6 +61,8 @@ pip install pymupdf                    # only if processing an annotation PDF (s
 | `extract_masks.py` | run mask extraction on the annotated crops (self-checks axon counts). |
 | `build_ground_truth.py` | register annotations → write `data/samples/masks/native/`. |
 | `evaluate_segmentation.py` | segment raw + score vs native GT → `outputs/eval/`. |
+| `validate_external.py` | segment external images + compare mean g to a **published** g (mask-free) → `outputs/external/`. |
+| `data/external/` | external corpus (see `docs/reference/external_datasets.md`). `macaque_cc/` = 8 CC-BY TEM images + `fetch.py`. |
 | `gratio/phase1_*.py`, `phase2.py` | older research spikes, NOT the main path. "The pipeline" = `gratio.segment`. |
 
 ## How to run
@@ -69,9 +71,19 @@ pip install pymupdf                    # only if processing an annotation PDF (s
 python analyze.py data/samples/*.png -o outputs/   # the pipeline; side-by-side + CSV per image
 python report.py                                   # SHOW THIS: [original|result|GT] + per-neuron metrics
 python build_ground_truth.py                       # (re)build ground truth from the masks
-python evaluate_segmentation.py                    # score pipeline vs ground truth
+python evaluate_segmentation.py                    # score pipeline vs ground truth (masks)
+python data/external/macaque_cc/fetch.py           # fetch external macaque TEM set (CC-BY, once)
+python validate_external.py                         # mean g vs PUBLISHED g on the external set
 python -m pytest -q                                # synthetic + GT + evaluation regression tests
 ```
+
+**Two validation tiers — don't confuse them.** The three `data/samples/` have
+hand-drawn **masks**, so they score *segmentation* (IoU/recall + per-neuron g) via
+`evaluate_segmentation.py` / `report.py`. External sets like `macaque_cc` have a
+**published g but no masks**, so they score only the *g-ratio number* via
+`validate_external.py` — never wire a mask-free set into the IoU harness
+(fabricating masks breaks "GT is annotated, never invented"). See
+`docs/reference/external_datasets.md` and R34 in `user_masks.md`.
 
 When presenting results to the owner, run `report.py` (thin/transparent 3-panel
 figures + per-neuron accuracy/recall + g-ratio pred-vs-GT + timing), **not** the
@@ -152,3 +164,8 @@ create it from `main` if missing. Commit with clear messages; push with
 - Isolated fibre (sample_02) outer bound rests on a geometric cap, not evidence
   of an outer membrane; a per-side (ridge-terminated) outer boundary is the next
   tool. See the "Residual" / "Known limits" sections of `user_masks.md`.
+- **Scale transfer to wide fields.** The pipeline is tuned for the zoomed 1–5
+  axon sample view (`min_axon_frac=0.02`), so on dense wide fields like
+  `macaque_cc` it detects 0 axons full-frame and only the largest 2–3 in a crop
+  (`validate_external.py`: crops mean |Δg| ≈ 0.16). A scale-aware / multi-scale
+  detection pass is the unlock for the external corpus (R34).

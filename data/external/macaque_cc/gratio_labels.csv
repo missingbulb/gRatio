@@ -1,0 +1,9 @@
+segment,image,g_aggregate,g_mean,mvf,fvf,notes
+1,images/Segment_1.png,0.70,0.65,0.34,0.66,Table 1 (Stikov 2015 Data in Brief)
+2,images/Segment_2.png,0.72,0.66,0.27,0.56,Table 1
+3,images/Segment_3.png,0.67,0.62,0.40,0.73,Table 1
+4,images/Segment_4.png,0.75,0.68,0.22,0.50,Table 1
+5,images/Segment_5.png,0.72,0.65,0.27,0.56,Table 1
+6,images/Segment_6.png,0.74,0.66,0.26,0.56,Table 1
+7,images/Segment_7.png,0.67,0.60,0.23,0.41,Table 1
+8,images/Segment_8.png,0.75,0.65,0.19,0.43,Table 1

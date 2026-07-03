@@ -470,6 +470,27 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     smoothing of frame-filling fibres (sample_02's single fibre is 87% of the image)
     cannot be cropped and are left as-is.
 
+16. *External g-ratio validation set — macaque corpus callosum TEM* (R34). Added
+    `data/external/macaque_cc/`: 8 CC-BY TEM images (Stikov 2015 Data in Brief,
+    9.144 nm/px, corpus callosum) with a **published aggregate g-ratio per image**
+    (Table 1, g_agg 0.67–0.75), fetched from Europe PMC and converted TIFF→PNG
+    (lossless: the source is 8-bit) by `fetch.py`. This is deliberately a
+    **g-ratio-number** validation, not a segmentation one: the set has **no
+    per-axon masks**, so it feeds a new `validate_external.py` (mean pipeline g vs
+    published g) and is kept OUT of the mask-IoU harness
+    (`evaluate_segmentation.py`/`report.py`) — inventing masks to force it in would
+    break the "GT is annotated, never invented" rule. *Tried and rejected:* running
+    the current pipeline on these as-is. Full fields detect **0** axons (every CC
+    axon is below `min_axon_frac`); sample-scale crops find only the largest 2–3 and
+    over-extend the band into neighbours (crops mean |Δg| ≈ 0.16 vs published, wild
+    per-crop: 0.31–0.71). So the set is wired in as the **target a future
+    scale-aware pass is measured against**, not as a passing regression;
+    `tests/test_external.py` only smoke-tests that the data loads, the published g
+    is self-consistent (`g_agg ≈ sqrt(1−MVF/FVF)`), and the pipeline runs on a crop
+    — no quality gate. A curated list of further sources (incl. **masked** ones for
+    per-axon IoU: WMMDB, AxonDeepSeg, AxonCallosumEM) is in
+    `docs/reference/external_datasets.md`.
+
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
 `myelin_thickness_mult_isolated=1.4`, `isolation_ramp=(7,13)`,

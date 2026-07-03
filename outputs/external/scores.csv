@@ -1,0 +1,17 @@
+image,kind,n_detected,pipeline_mean_g,published_g_mean,published_g_aggregate,delta_g_mean
+S1_full,full,0,nan,0.65,0.7,
+S1_crop,crop,3,0.3138,0.65,0.7,-0.3362
+S2_full,full,0,nan,0.66,0.72,
+S2_crop,crop,2,0.3586,0.66,0.72,-0.3014
+S3_full,full,0,nan,0.62,0.67,
+S3_crop,crop,1,0.5613,0.62,0.67,-0.0587
+S4_full,full,0,nan,0.68,0.75,
+S4_crop,crop,2,0.4307,0.68,0.75,-0.2493
+S5_full,full,0,nan,0.65,0.72,
+S5_crop,crop,2,0.7072,0.65,0.72,0.0572
+S6_full,full,0,nan,0.66,0.74,
+S6_crop,crop,4,0.5642,0.66,0.74,-0.0958
+S7_full,full,0,nan,0.6,0.67,
+S7_crop,crop,0,nan,0.6,0.67,
+S8_full,full,1,0.1760,0.65,0.75,-0.4740
+S8_crop,crop,2,0.6706,0.65,0.75,0.0206
