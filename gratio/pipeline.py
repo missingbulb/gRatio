@@ -87,10 +87,16 @@ DEFAULTS = dict(
                               # residual assumption is intra-fibre: the outer boundary is within a
                               # few ring-thicknesses of the axon (a wedge ballooning many-fold is a
                               # neighbour bleeding in, not this fibre's myelin).
-    myelin_thickness_mult_isolated=1.8,  # tighter cap for an ISOLATED axon (see isolation_ramp):
+    myelin_thickness_mult_isolated=1.4,  # tighter cap for an ISOLATED axon (see isolation_ramp):
                               # its myelin faces open extracellular space on all sides, where dark
                               # adjacent tissue looks like myelin and no neighbouring axon bounds it,
                               # so the band must not run past the axon's own uniform ring thickness.
+                              # 1.4 is the elbow measured against the one isolated example (sample_02):
+                              # it removes the maximal outer over-reach (FP 39.7k -> 27.2k) with the
+                              # under-reach still at/below baseline (FN 3.69k -> 3.62k) -- i.e. pure
+                              # over-reach removal, no clipping of genuine myelin. Below 1.4 the FN
+                              # climbs (real sheath starts being clipped); see R31. Still the
+                              # weakest-supported constant here (calibrated on a single isolated axon).
     isolation_ramp=(7.0, 13.0),  # neighbour-distance/own-thickness range over which the cap ramps
                               # from clustered (myelin_thickness_mult, at/below 7) to isolated
                               # (myelin_thickness_mult_isolated, at/above 13). A smooth ramp, not a
@@ -107,15 +113,26 @@ DEFAULTS = dict(
                               # axoplasm vs dark myelin, peel the dark band inward from the fibre edge,
                               # and keep the bright core. This bias nudges the split darker so the border
                               # sits at the axolemma. Calibrated against the hand masks.
-    axon_smooth_frac=0.6,     # smooth the peeled axon border by this fraction of the axon radius, so it
-                              # is a simple rounded curve like a hand tracing (the peel itself is ragged)
+    axon_smooth_frac=0.8,     # smooth the peeled axon border by this fraction of the axon radius, so it
+                              # is a simple rounded curve like a hand tracing (the peel itself is ragged).
+                              # 0.8 removes the residual per-fibre inner-border wobble (sample_01 axon-side
+                              # myelin FP 11.2k -> 9.8k) and lifts mean axon IoU; 0.9+ over-rounds
+                              # sample_03's elongated tadpole axons (their narrow width is not captured by
+                              # the equivalent radius), so 0.8 is the ceiling for a uniform kernel. See R31.
     axon_smooth_max=99,       # ...capped to this absolute kernel size
     fiber_smooth_frac=0.2,    # smooth the fibre outer bound (open then close) by this fraction of the
                               # axon radius, so it is a clean rounded envelope like a hand tracing
                               # instead of a spiky outline that reaches into the extracellular space
-    border_smooth_tol=2.0,    # final pass: refit the INNER (axon) border as a smooth spline within this
+    border_smooth_tol=1.0,    # final pass: refit the INNER (axon) border as a smooth spline within this
                               # many px (least-squares periodic spline; removes the pixel staircase
                               # without shrinking). Larger tol -> fewer control points -> smoother.
+                              # Lowered 2.0 -> 1.0: at 2.0 the spline rounded off the genuinely
+                              # non-circular axons (esp. sample_03's oval/tadpole bodies), reading
+                              # their border in past GT; 1.0 gives enough control points to track the
+                              # real shape without re-introducing the raster staircase (sample_03 axon
+                              # IoU 0.934 -> 0.944, mean myelin +0.003). Below ~0.7 it plateaus. Stays
+                              # >= the outer tol (border_smooth_tol_fiber=0.5), consistent with the
+                              # compact axon needing fewer curves than the long fibre outline. See R31.
     border_smooth_tol_fiber=0.5,  # SEPARATE, tighter tol for the OUTER (fibre) border -> many more
                               # control points, so its longer/undulating outline is de-staircased
                               # without the shape-rounding that a shared (axon) tol caused on sample_03.

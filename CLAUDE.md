@@ -61,10 +61,10 @@ python -m pytest -q                                # synthetic + GT + evaluation
 | `sample_02.png` | 871×844 | single healthy axon, thick concentric myelin (the clean parity case). |
 | `sample_03.png` | 482×505 | 5-axon touching cluster, thin myelin. |
 
-Current pipeline g-ratios: s01 ≈ 0.66/0.64/0.60/0.73, s02 ≈ 0.68, s03 ≈
-0.68/0.82/0.72/0.65/0.84 (s01 #2/#3 raised by Phase-3 pocket exclusion).
-Segmentation vs GT means ≈ axon 0.94 / myelin 0.84 / fibre 0.95, detection
-1.00/1.00; Phase-3 omit on s01 ≈ IoU 0.60, recall 0.68, precision 0.83.
+Current pipeline g-ratios (axon-id order): s01 ≈ 0.67/0.64/0.60/0.75, s02 ≈ 0.69,
+s03 ≈ 0.82/0.68/0.72/0.85/0.65. Segmentation vs GT means ≈ axon 0.94 / myelin 0.86 /
+fibre 0.96, detection 1.00/1.00 (means after R31/R32; see user_masks.md).
+Phase-3 omit on s01 ≈ IoU 0.64, recall 0.69, precision 0.90.
 
 ## Ground truth — how it works (READ before touching it)
 
@@ -120,7 +120,7 @@ create it from `main` if missing. Commit with clear messages; push with
 - Malformed-axon inner boundary (sample_01 #2 arc, sample_03 #5 inner) needs a
   local, not global, refinement.
 - Orange **omit** / non-myelin pockets are now subtracted from A_myelin
-  (**Phase 3, R31**: `detect_nonmyelin`, A-NONMYELIN-BRIGHT). Residual: two faint/
+  (**Phase 3, R32**: `detect_nonmyelin`, A-NONMYELIN-BRIGHT). Residual: two faint/
   thin sample_01 pockets (a dim outer sliver, a thin edge-bay) are left in — not
   recoverable without gutting sample_02's clean myelin.
 - Isolated fibre (sample_02) outer bound rests on a geometric cap, not evidence

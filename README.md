@@ -98,8 +98,8 @@ sample images' scale bars are not used.
 
 Working prototype, validated against **hand-drawn ground-truth masks** of the
 three sample micrographs. The segmentation runs on the raw grayscale images and
-is scored by mask overlap (IoU) — current means: **axon 0.93 / myelin 0.76 /
-fibre 0.90, detection recall & precision 1.00** (baseline before tuning was
+is scored by mask overlap (IoU) — current means: **axon 0.94 / myelin 0.87 /
+fibre 0.96, detection recall & precision 1.00** (baseline before tuning was
 0.74 / 0.51 / 0.80, recall 0.80). Run `python evaluate_segmentation.py`.
 
 New to the project? Read these first:

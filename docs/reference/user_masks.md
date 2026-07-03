@@ -11,7 +11,7 @@ saved in [`data/samples/masks/`](../../data/samples/masks/):
 
 | masked file            | sample        | contents                                  |
 |------------------------|---------------|-------------------------------------------|
-| `sample_01_masked.png` | `sample_01`   | malformed cluster, 4 axons + 4 omit areas |
+| `sample_01_masked.png` | `sample_01`   | malformed cluster, 4 axons + 5 omit areas |
 | `sample_02_masked.png` | `sample_02`   | one healthy concentric axon               |
 | `sample_03_masked.png` | `sample_03`   | 5-axon cluster                            |
 
@@ -22,7 +22,7 @@ saved in [`data/samples/masks/`](../../data/samples/masks/):
   So the myelin band is the annulus **between the red and the purple** loops.
 - **orange** — regions to **omit**: bright vacuoles / splits / non-myelin
   inclusions sitting *inside* the myelin layer that must be excluded from the
-  myelin area. **Now implemented (Phase 3, R31):** the closed orange loops are
+  myelin area. **Now implemented (Phase 3, R32):** the closed orange loops are
   filled into pocket masks, subtracted from the myelin GT, and detected on the
   raw data by `detect_nonmyelin`.
 - Enclosed areas (axons and omit regions) are **numbered by hand** per image.
@@ -49,10 +49,11 @@ issue flagged in the README, now with a concrete target: **0.70, not 0.81**.
 ### sample_01 — malformed cluster (`outputs/contrast_sample_01.png`)
 
 - User marks **4 axons** (#1 top-left, #2 large central, #3 bottom-left,
-  #4 bottom-right) and **4 omit regions** (#5–#8: bright blebs between fibers).
+  #4 bottom-right) and **5 omit regions** (the tracer's #5–#8 plus a thin
+  bottom-right sliver: bright blebs between fibers).
 - Pipeline detects all 4 axons but #3 only as a **tiny 2403 px fragment**
   (`g=0.73`) instead of a full body — the malformed/edge boundary collapses there.
-- Pipeline does **not** yet exclude the orange omit regions.
+- Pipeline **now excludes** the orange omit regions (Phase 3, R32).
 
 ### sample_03 — 5-axon cluster (`outputs/contrast_sample_03.png`)
 
@@ -94,8 +95,8 @@ Outputs per image, in `outputs/masks/`:
 Region **IDs are positional** (top-to-bottom, left-to-right) and do **not**
 necessarily match the handwritten numbers. Extraction is pinned by
 `tests/test_mask_extract.py` (counts 4/1/5, axon⊂fibre, non-empty myelin,
-determinism). The orange **omit** regions are detected and reported
-(`orange_px`) but not yet subtracted — that is the deferred step.
+determinism). The orange **omit** regions are filled into pocket masks and,
+since Phase 3 (R32), subtracted from the myelin area.
 
 ## Validating raw-data segmentation against the ground truth
 
@@ -127,10 +128,14 @@ no false positives**, then maximise class overlap.
 
 | sample     | axon IoU | myelin IoU | fibre IoU | detect P / R |
 |------------|---------:|-----------:|----------:|:------------:|
-| sample_01  | 0.91 | 0.87 | 0.96 | 1.00 / 1.00 |
-| sample_02  | 0.96 | 0.84 | 0.93 | 1.00 / 1.00 |
-| sample_03  | 0.92 | 0.82 | 0.95 | 1.00 / 1.00 |
-| **mean**   | **0.93** | **0.85** | **0.95** | **1.00 / 1.00** |
+| sample_01  | 0.92 | 0.85 | 0.96 | 1.00 / 1.00 |
+| sample_02  | 0.96 | 0.88 | 0.96 | 1.00 / 1.00 |
+| sample_03  | 0.94 | 0.83 | 0.95 | 1.00 / 1.00 |
+| **mean**   | **0.94** | **0.86** | **0.96** | **1.00 / 1.00** |
+
+(values after R31 + R32; before them, mean was axon 0.93 / myelin 0.85 / fibre
+0.95. sample_01 myelin is scored against the omit-corrected GT — the orange
+pockets are excluded from both prediction and truth, R32.)
 
 (baseline before tuning was axon 0.74 / myelin 0.51 / fibre 0.80, recall 0.80.)
 
@@ -355,29 +360,74 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
     (to learn a shape prior) or the hand-drawn inter-cell line. Documented under
     A-MYELIN-DENSE's failure mode.
 
-13. *Phase 3 — exclude non-myelin pockets from the myelin area* (R31, closes F1).
+13. *Three Pareto-safe recalibrations after the sample_03 GT update* (R31). With
+    the refreshed sample_03 ground truth in place, a full re-sweep of the boundary
+    parameters found three changes that raise agreement on **every** sample at once
+    (no inter-sample trade, recall/precision still 1.00/1.00), attacking the two
+    largest error components a per-fibre decomposition surfaced — sample_02's outer
+    over-reach and the inner-border rounding:
+    - `myelin_thickness_mult_isolated` **1.8 → 1.4**. This is the isolated-fibre
+      outer cap and, on this 3-image set, only sample_02 is isolated, so it is
+      effectively the sample_02 outer-boundary knob. 1.4 is the *measured elbow*:
+      it removes the maximal outer over-reach (sample_02 myelin FP 39.7k → 27.2k)
+      while the under-reach stays **at/below baseline** (FN 3.69k → 3.62k) — i.e.
+      pure over-reach removal, no clipping of genuine myelin (below 1.4 the FN
+      climbs as real sheath starts being cut). sample_02 myelin 0.842 → 0.883,
+      fibre 0.93 → 0.96. The earlier capsweep (R30) that found "no clean optimum"
+      predated `dense_extend`, which now re-recovers any genuinely thick sheath the
+      tighter cap clips, so the trade is gone. Still the weakest-supported constant
+      (one isolated axon) — see A-ISOLATED-TIGHTER.
+    - `axon_smooth_frac` **0.6 → 0.8**. More morphological rounding of the peeled
+      inner border removes its residual per-fibre wobble (sample_01 axon-side myelin
+      FP 11.2k → 9.8k). 0.9+ over-rounds sample_03's elongated tadpole axons (their
+      narrow width is not captured by the equivalent radius used to size the
+      kernel), so 0.8 is the ceiling for a *uniform* kernel; a width-aware kernel is
+      the way past it but was not needed for a gain here.
+    - `border_smooth_tol` **2.0 → 1.0** (the INNER/axon spline refit). At 2.0 the
+      final spline rounded off the genuinely non-circular axons — most visibly
+      sample_03's oval/tadpole bodies — reading their border in past GT. 1.0 gives
+      enough control points to track the real shape without re-introducing the
+      raster staircase (sample_03 axon IoU 0.934 → 0.944). It plateaus below ~0.7
+      and stays ≥ the outer tol (`border_smooth_tol_fiber`=0.5), consistent with the
+      compact axon needing fewer curves than the long, undulating fibre outline.
+
+    Net over the three: mean **axon 0.937 → 0.943, myelin 0.847 → 0.866, fibre
+    0.947 → 0.955**; every per-sample class IoU is same-or-higher. What was *not*
+    changed, deliberately: `dense_extend_thr`, `myelin_thickness_mult`, and
+    `junction_fill_kfrac` each showed a ≤0.002 mean gain that came from an
+    inter-sample trade (helping one sample by hurting another) — left at their
+    tuned values to avoid the single-sample overfitting the owner directives forbid.
+    The residual outer-boundary walls (sample_02 shared wall, sample_03 open-side
+    cluster-edge over-reach) are unchanged: they are dense-dark (82–94% of the
+    over-reach), so no local density/ridge signal separates them — the documented
+    learned-outer-boundary route still stands.
+
+14. *Phase 3 — exclude non-myelin pockets from the myelin area* (R32, closes F1).
     The tracer paints bright vacuoles / splits / extracellular inclusions sitting
     *inside* the myelin layer in **orange** ("omit"); they are non-myelin and must
     not count toward `A_myelin` (R7). Two coupled changes: (a) the annotation side
     now **fills** the closed orange loops into pocket masks (dropping the
     handwritten `#N` glyphs by the same size floor used for axons, and gating on a
-    *saturated*-orange pen so a translucent per-neuron fill is never mistaken for
-    one), warps them to native coords (`_gt_omit.png`), and **subtracts them from
-    the myelin GT** so the ground truth matches the tracer's convention; (b) the
-    raw-data pipeline gains `detect_nonmyelin` (**A-NONMYELIN-BRIGHT**): within each
-    fibre's assigned myelin, a region brighter than the dark-myelin threshold that
-    survives a morphological opening scaled to that fibre's *own* measured ring
-    thickness is a fat bright pocket and is removed from the band; each pocket
-    boundary then gets the **regular least-squares spline smoothing** (`nonmyelin_smooth_tol`,
-    reusing `border_smooth_tol`) so it reads like a hand tracing, not a pixel
-    staircase — area-neutral, so the g-ratio is unchanged (it even nudges the omit
-    IoU up 0.60→0.61 by matching the smooth hand outline). The opening is
-    what makes it generalise: a thick clean sheath (sample_02) or a thin one
-    (sample_03) yields **zero** pockets (byte-for-byte unchanged), while sample_01's
-    three clear vacuoles are recovered. Result on sample_01: omit IoU 0.60,
-    recall 0.68 (the 3 unambiguous vacuoles; per-fibre g rises #2 0.63→0.64,
-    #3 0.58→0.60, #4 0.73→0.73), precision 0.83, and the myelin IoU against the
-    omit-corrected GT lifts **0.814 → 0.851**. The two missed pockets are the
+    *saturated*-orange pen — S ≥ 170, above the translucent-fill band — so a
+    per-neuron fill is never mistaken for one), warps them to native coords
+    (`_gt_omit.png`), and **subtracts them from the myelin GT** so the ground truth
+    matches the tracer's convention; (b) the raw-data pipeline gains
+    `detect_nonmyelin` (**A-NONMYELIN-BRIGHT**): within each fibre's assigned myelin,
+    a region brighter than the dark-myelin threshold that survives a morphological
+    opening scaled to that fibre's *own* measured ring thickness is a fat bright
+    pocket and is removed from the band. Each pocket boundary then gets the
+    **regular least-squares spline smoothing** (`nonmyelin_smooth_tol`, reusing
+    `border_smooth_tol`) so it reads like a hand tracing, not a pixel staircase —
+    area-neutral, so the g-ratio is unchanged. A per-fibre **safety valve**
+    (`nonmyelin_max_frac`=0.5) skips removal on any fibre where the "pockets" would
+    swallow more than half the myelin (mis-segmentation or a uniformly-bright,
+    uneven-stain sheath), bounding g inflation toward 1.0. The opening is what makes
+    it generalise: a thick clean sheath (sample_02) or a thin one (sample_03) yields
+    **zero** pockets (byte-for-byte unchanged), while sample_01's three clear
+    vacuoles are recovered. Result on sample_01 (with the R31 border re-sweep in
+    place): omit IoU **0.64**, recall 0.69 (the 3 unambiguous vacuoles; per-fibre g
+    rises #2 0.63→0.64, #3 0.58→0.60), precision **0.90**, and the myelin IoU against
+    the omit-corrected GT lifts **0.819 → 0.853**. The two missed pockets are the
     genuinely marginal ones — a *dim* outer sliver (median intensity 153, barely
     above the myelin's 134) and a *thin* edge-bay 22% outside the predicted band —
     which no brightness/opening rule recovers without also gutting sample_02's clean
@@ -386,13 +436,14 @@ read the g-ratio high; sample_02 g fell 0.81 → 0.73, close to the hand-traced
 
 The relevant `segment` defaults are now `myelin_percentile=28`,
 `myelin_fill_percentile=42`, `myelin_thickness_mult=3.0`,
-`myelin_thickness_mult_isolated=1.8`, `isolation_ramp=(7,13)`,
-`fiber_vacuole_close_frac=1.0`, `dense_extend=True`, `junction_fill=True`
-(`junction_fill_kfrac=3.0`), `detect_bubbles=False`, `fill_edge_holes=True`,
-`min_axon_frac=0.02`; territory is thickness-weighted and every outer-myelin rule
-scales with each axon's own measured thickness (no pixel constant, no
-axon-radius/g-ratio prior). The only cap value calibrated on a single isolated
-example (`myelin_thickness_mult_isolated`) is documented as such.
+`myelin_thickness_mult_isolated=1.4`, `isolation_ramp=(7,13)`,
+`axon_smooth_frac=0.8`, `border_smooth_tol=1.0`, `fiber_vacuole_close_frac=1.0`,
+`dense_extend=True`, `junction_fill=True` (`junction_fill_kfrac=3.0`),
+`detect_bubbles=False`, `fill_edge_holes=True`, `min_axon_frac=0.02`; territory is
+thickness-weighted and every outer-myelin rule scales with each axon's own measured
+thickness (no pixel constant, no axon-radius/g-ratio prior). The only cap value
+calibrated on a single isolated example (`myelin_thickness_mult_isolated`) is
+documented as such.
 
 **Residual, needing a per-side (not global) outer boundary:**
 - On an *open* extracellular-facing arc a fibre can over-reach (sample_03 #2,
@@ -426,7 +477,7 @@ example (`myelin_thickness_mult_isolated`) is documented as such.
   myelin is assigned by nearest-axon, not by that line.
 - sample_01's myelin IoU stays lowest, partly definitional. The orange omit
   regions are now excluded from both the myelin GT and the prediction (Phase 3,
-  R31), which lifts the omit-corrected myelin IoU to 0.85; the two faint/thin
+  R32), which lifts the omit-corrected myelin IoU to 0.85; the two faint/thin
   pockets the detector leaves in are the honest residual.
 - Cluster axons with the thickest myelin walls (sample_01 #3, per-axon IoU ≈ 0.48)
   under-capture myelin for an *upstream* reason, not the cap: much of that hand-
@@ -441,7 +492,7 @@ The harness and the perfect-recall / no-false-positive guarantees are pinned by
 1. **Inner-boundary refinement** — the axolemma is being drawn too far out into
    the myelin (sample_02 proves it quantitatively); this inflates g across the board.
 2. **Recover missed/fragmented axons** — sample_03 #3 and sample_01 #3.
-3. **Omit regions** — ✔ done (Phase 3, R31): the orange pockets are excluded from
+3. **Omit regions** — ✔ done (Phase 3, R32): the orange pockets are excluded from
    `A_myelin` on both the ground truth and the raw-data prediction.
 4. **Wire these tracings in as reference g-ratios** so `render(references=…)` can
    print truth beside our value, and add a pipeline-vs-truth regression test.

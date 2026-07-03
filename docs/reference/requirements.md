@@ -97,7 +97,7 @@ intent in parentheses where useful.
 ## Deferred / future work
 
 - ~~**F1.** Exclude the **orange omit regions** from the myelin area (R7).~~
-  **Done — Phase 3 (R31):** the filled orange pockets are subtracted from the
+  **Done — Phase 3 (R32):** the filled orange pockets are subtracted from the
   myelin ground truth and detected on the raw data (`detect_nonmyelin`,
   A-NONMYELIN-BRIGHT), excluding them from `A_myelin`.
 - **F2.** **Inter-cell separation** along the hand-drawn line (R9) for touching
