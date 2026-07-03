@@ -67,10 +67,15 @@ pip install pymupdf                    # only if processing an annotation PDF (s
 
 ```bash
 python analyze.py data/samples/*.png -o outputs/   # the pipeline; side-by-side + CSV per image
+python report.py                                   # SHOW THIS: [original|result|GT] + per-neuron metrics
 python build_ground_truth.py                       # (re)build ground truth from the masks
 python evaluate_segmentation.py                    # score pipeline vs ground truth
 python -m pytest -q                                # synthetic + GT + evaluation regression tests
 ```
+
+When presenting results to the owner, run `report.py` (thin/transparent 3-panel
+figures + per-neuron accuracy/recall + g-ratio pred-vs-GT + timing), **not** the
+raw `analyze.py` overlay. Format spec: `docs/reference/working_process.md`.
 
 ## The three samples (`data/samples/`)
 

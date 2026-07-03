@@ -28,13 +28,35 @@ Follow it whenever you change segmentation, extraction, or ground truth.
 ## Show, don't just tell
 
 - Every algorithmic change is presented as a rendered comparison against the
-  original — and against the GT when scoring is involved. Reach for
-  `render_comparison()` / the GT review render, not a wall of metrics.
-- Render style (owner guideline): thin **1 px, semi-transparent** white line for
-  the axon, thin 1 px semi-transparent **myelin-coloured** line for the myelin
-  outer edge, over a faint per-neuron fill. Detail: `gt_from_masks.md` §5.
+  original — and against the GT when scoring is involved. Reach for the results
+  report below, not a wall of metrics.
 - Put throwaway renders/diagnostics in the scratchpad; only the final artifact
   and the code that regenerates it get committed.
+
+## The results report — the format to show (run `python report.py`)
+
+This is the presentation the owner wants for pipeline results; `report.py` is the
+canonical generator (writes `outputs/report/<stem>_report.png` +
+`metrics.{md,csv}`). Do **not** show the raw `analyze.py` overlay (thick borders,
+heavy fills) — show this. The spec, so it can be reproduced or re-derived:
+
+1. **Render style — thin and transparent.** Thin **1 px, semi-transparent** lines:
+   **white** for the axon boundary, the **neuron's own colour** for the myelin
+   outer edge, **orange** for non-myelin pockets. Area fills are **mostly
+   transparent** (`FILL_ALPHA ≈ 0.20`, `LINE_ALPHA ≈ 0.70`) so the EM texture
+   stays readable. Same guideline for a GT-only figure: `gt_from_masks.md` §5.
+2. **Three panels per sample: `[ original | result | ground truth ]`.** The result
+   is the raw-data segmentation; the ground truth is the registered GT. Give a
+   matched neuron the **same colour in both** the result and GT panels (match via
+   `gratio.evaluate.match_axons`) so over/under-reach is obvious at a glance, and
+   tag each neuron with a small id that keys into the table.
+3. **Per-neuron metrics table.** For each matched neuron, per area
+   (**axon, myelin**; **non-myelin** per sample, since pockets are extracellular):
+   **precision ("accuracy")** = `|pred ∩ gt| / |pred|` and **recall** =
+   `|pred ∩ gt| / |gt|`, from pixel counts (show the raw `pred/gt px`). Plus the
+   **g-ratio per neuron, pipeline vs GT**, and the **segment execution time (ms)**
+   per sample (median of a few runs). Recall is the metric that matters most here
+   (a missed area corrupts a fibre) — keep it in view.
 
 ## Diagnose before deciding
 
