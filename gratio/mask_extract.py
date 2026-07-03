@@ -58,9 +58,10 @@ MIN_REGION_FRAC = 0.004
 # the orange 'omit' pockets are smaller than axons, so they get a lower size floor;
 # it still comfortably clears the handwritten #N glyphs (open strokes, tiny filled area)
 OMIT_MIN_REGION_FRAC = 0.001
-# the omit loops are drawn with a saturated pen; require that saturation so a
-# translucent per-neuron colour fill (per-neuron-fill scheme) is never mistaken for one
-OMIT_MIN_SAT = 120
+# the omit loops are drawn with a hard, ~fully-saturated pen (S ~ 240-255 on the
+# samples); require a saturation strictly ABOVE the translucent-fill band
+# (FILL_SAT max = 165) so a per-neuron colour fill can never form an omit pocket.
+OMIT_MIN_SAT = 170
 
 
 @dataclass

@@ -67,6 +67,24 @@ def test_detector_byte_neutral_without_pockets():
         assert np.array_equal(on["myelin_mask"], off["myelin_mask"])
 
 
+def test_safety_valve_bounds_removal():
+    """The per-fibre cap (nonmyelin_max_frac) prevents the detector from deleting
+    most of a fibre's myelin -- e.g. a uniformly-bright (uneven-stain) sheath that
+    would otherwise be stripped wholesale and inflate g toward 1.0."""
+    from gratio.pipeline import _detect_nonmyelin_pockets, DEFAULTS
+    H = W = 200
+    gf = np.full((H, W), 200, np.uint8)                       # whole field bright
+    axon = np.zeros((H, W), np.int32); cv2.circle(axon, (100, 100), 40, 1, -1)
+    myelin = np.zeros((H, W), np.int32); cv2.circle(myelin, (100, 100), 80, 1, -1)
+    myelin[axon == 1] = 0
+    axons = [{"id": 1}]
+    band = int((myelin == 1).sum())
+    wide = _detect_nonmyelin_pockets(gf, axon, myelin, axons, {**DEFAULTS, "nonmyelin_max_frac": 1.0})
+    capped = _detect_nonmyelin_pockets(gf, axon, myelin, axons, {**DEFAULTS, "nonmyelin_max_frac": 0.5})
+    assert wide.sum() > 0.5 * band          # without the cap it would gut the band
+    assert capped.sum() == 0                 # with the cap that fibre is left intact
+
+
 def test_detector_finds_sample01_pockets():
     """On sample_01 the detector recovers the clear bright vacuoles with good
     precision, matched against the registered omit ground truth."""

@@ -176,9 +176,14 @@ DEFAULTS = dict(
                               # fatter pocket, which is why a clean concentric sheath yields none.
     nonmyelin_ring_frac=0.15,  # exclude a thin bright periaxonal ring (= this x the fibre thickness)
                               # hugging the axon -- the tracer counts that ring as myelin, not a pocket.
-    nonmyelin_min_thick=0.6,  # pocket size floor = (this x the fibre thickness)^2 (scale-free); with
-                              # the opening this mostly guards against speckle.
-    nonmyelin_min_px=150,     # ...but never below this absolute floor (px).
+    nonmyelin_min_thick=0.6,  # pocket size floor = (this x the fibre thickness)^2, plus a small
+                              # absolute px floor below; with the opening this mostly guards speckle.
+    nonmyelin_min_px=150,     # absolute lower bound on the pocket size floor (a raw-pixel speckle
+                              # guard like speckle_min; binds only on very thin / low-mag myelin).
+    nonmyelin_max_frac=0.5,   # SAFETY VALVE: never remove more than this fraction of a fibre's myelin
+                              # as 'pockets'. Above it, the band is mis-segmented or its myelin is
+                              # itself bright (immature/uneven stain) rather than truly vacuolated, so
+                              # removal is skipped for that fibre -- bounding g inflation toward 1.0.
 )
 
 # Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
@@ -517,10 +522,13 @@ def _detect_nonmyelin_pockets(gf, axon_mask, myelin_mask, axons, P):
     # myelin, a bright region (brighter than the dark-myelin threshold) that survives
     # a morphological opening whose radius scales with that fibre's OWN measured ring
     # thickness is a pocket; the thin light lamellae and the thin periaxonal ring do
-    # not survive it. Scale-free (opening + size floor scale with the measured
-    # thickness -- no pixel constant) and g-ratio-prior-free. Fails on immature /
-    # lightly-stained myelin whose compact sheath is itself bright (no dark/bright
-    # separation); low-contrast splits barely brighter than the myelin are left in,
+    # not survive it. The discriminating rules (bright cut, opening, size floor) scale
+    # with each fibre's own measured thickness -- resolution-independent and with no
+    # g-ratio prior (the only raw-pixel value is nonmyelin_min_px, a speckle floor).
+    # A per-fibre cap (nonmyelin_max_frac) bounds how much myelin may be removed. Fails
+    # on immature / lightly-stained myelin whose compact sheath is itself bright (no
+    # dark/bright separation) -- there the cap skips the fibre rather than delete real
+    # myelin; low-contrast splits barely brighter than the myelin are also left in,
     # conservatively (removing real myelin is worse than missing a faint pocket).
 
     Returns a bool mask of the detected pockets (a subset of ``myelin_mask > 0``).
@@ -560,11 +568,21 @@ def _detect_nonmyelin_pockets(gf, axon_mask, myelin_mask, axons, P):
             continue
         pockets = np.isin(lab, list(seeds))
         floor = max(P['nonmyelin_min_px'], (P['nonmyelin_min_thick'] * th) ** 2)
+        fib_out = np.zeros((H, W), bool)
         pl, pn = cc_label(pockets)
         for c in range(1, pn + 1):
             cm = pl == c
             if cm.sum() >= floor:
-                out |= cm
+                fib_out |= cm
+        # SAFETY VALVE: a genuine pocket is a modest inclusion in the sheath. If the
+        # 'pockets' would swallow more than nonmyelin_max_frac of this fibre's myelin,
+        # the fibre's band is not really vacuolated -- it is mis-segmented or its myelin
+        # is itself bright (immature / uneven stain, or bright neuropil over-enclosed by
+        # the outer smoothing). Removing that much would inflate g toward 1.0 with no
+        # evidence, so leave this fibre's myelin intact (conservative: keeping real
+        # myelin beats deleting it). Byte-neutral on the samples (max removed ~6%).
+        if fib_out.sum() <= P['nonmyelin_max_frac'] * fib_my.sum():
+            out |= fib_out
     return out
 
 
