@@ -17,6 +17,25 @@ g = sqrt( A_axon / (A_axon + A_myelin) )      # < 1; = radius ratio for a perfec
 are direction-independent, so malformed myelin correctly lowers the sheath.
 Dimensionless → no spatial calibration; scale bars are ignored.
 
+## How to work on this — the iterate-and-show loop (read this)
+
+The owner's preferred way of working, and the deliverable *style*, not optional
+polish. Full procedure: **`docs/reference/working_process.md`**. In short:
+
+1. **Diagnose visually first** — render current behaviour and *look*; measure any
+   fact a decision hinges on with a throwaway diagnostic (don't guess).
+2. **Prototype in the scratchpad** — don't touch tracked code yet.
+3. **Show a `[ original | result ]` (and `| ground truth`) comparison in the
+   chat** (`SendUserFile`, `display: render`). Picture leads; IoU/g numbers
+   confirm *after*, never instead.
+4. **Get a read, then wire it in fully** — source (not generated artifacts) →
+   regenerate → `pytest -q` green + report `evaluate_segmentation.py` deltas →
+   commit & push → record an **R-note** in `user_masks.md` (incl. what you tried
+   and *rejected*).
+
+Respect the invariants below (single-sample special-casing, scale-free myelin,
+recall = the hard constraint) or the change gets reverted.
+
 ## Environment (a fresh container has NONE of these)
 
 ```bash
@@ -101,6 +120,8 @@ Gotcha: translucent fills overlap the pen in *hue* but separate by *saturation*
 
 ## Where the deep rationale lives
 
+- `docs/reference/working_process.md` — **how to iterate here**: the diagnose →
+  prototype → show → wire-in loop and the definition of done.
 - `docs/reference/continuation.md` — resume state, how-to-run, tuned params & why.
 - `docs/reference/user_masks.md` — the full method narrative + the numbered
   **R-notes** (R19–R30): every fix, what was wrong, what was tried and rejected.
