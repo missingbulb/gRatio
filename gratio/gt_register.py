@@ -52,17 +52,26 @@ def _warp_label_to_raw(label_crop, scale, x0, y0, raw_shape):
 def ground_truth_for(raw_gray, crop_bgr):
     """Return ground-truth masks in the raw image's native coordinates.
 
-    dict: axon_labels, fiber_labels, myelin_mask, orange_mask, plus the fitted
-    (scale, x0, y0, score) and the per-axon list from the crop-space extraction.
+    dict: axon_labels, fiber_labels, myelin_mask, orange_mask, omit_mask, plus the
+    fitted (scale, x0, y0, score) and the per-axon list from the crop-space
+    extraction. ``myelin_mask`` is the OMIT-CORRECTED myelin (annulus minus the
+    orange non-myelin pockets), so it agrees with the tracer's convention (R7):
+    the orange pockets are excluded from the myelin area. ``omit_mask`` is the
+    filled non-myelin pockets on their own.
     """
     ext = extract(crop_bgr)
     scale, x0, y0, score = register(raw_gray, crop_bgr)
     to_raw = lambda lab: _warp_label_to_raw(lab, scale, x0, y0, raw_gray.shape)
+    annulus = to_raw(ext.myelin_mask.astype(np.int32)) > 0
+    omit = to_raw((ext.omit_labels > 0).astype(np.int32)) > 0
+    myelin = (annulus & ~omit).astype(np.uint8) * 255
     return dict(
         axon_labels=to_raw(ext.axon_labels),
         fiber_labels=to_raw(ext.fiber_labels),
-        myelin_mask=to_raw(ext.myelin_mask.astype(np.int32)).astype(np.uint8),
+        myelin_mask=myelin,
+        omit_mask=omit.astype(np.uint8) * 255,
         orange_mask=to_raw(ext.orange_mask.astype(np.int32)).astype(np.uint8),
         fit=dict(scale=scale, x0=x0, y0=y0, score=score),
         n_axons=len(ext.axons),
+        n_omits=len(ext.omits),
     )

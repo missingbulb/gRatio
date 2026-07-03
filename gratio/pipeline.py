@@ -161,6 +161,24 @@ DEFAULTS = dict(
                               # by myelin on its visible sides but touching the border cannot be
                               # closed by binary_fill_holes; reflect-pad handles it. Only affects
                               # fibres that touch the image edge.
+    # --- Phase 3: non-myelin pockets (the tracer's orange 'omit' regions) -------
+    detect_nonmyelin=True,    # detect bright non-myelin pockets (vacuoles / splits / inclusions)
+                              # sitting INSIDE the myelin band and EXCLUDE them from A_myelin (so the
+                              # g-ratio measures true myelin material). See _detect_nonmyelin_pockets
+                              # and A-NONMYELIN-BRIGHT. Byte-clean on fibres with no pockets.
+    nonmyelin_bright_percentile=None,  # a pocket pixel is brighter than the dark-myelin threshold;
+                              # None -> reuse myelin_fill_percentile (the same cut that defines dark
+                              # myelin material), so a pocket is exactly 'in the band but not material'.
+    nonmyelin_open_frac=0.8,  # a genuine pocket is a FAT bright blob, not a thin light lamella or the
+                              # thin periaxonal ring: keep only bright regions that survive an opening
+                              # of radius = this x the fibre's OWN measured ring thickness. Scale-free
+                              # (no pixel constant); a thick-myelin fibre demands a proportionally
+                              # fatter pocket, which is why a clean concentric sheath yields none.
+    nonmyelin_ring_frac=0.15,  # exclude a thin bright periaxonal ring (= this x the fibre thickness)
+                              # hugging the axon -- the tracer counts that ring as myelin, not a pocket.
+    nonmyelin_min_thick=0.6,  # pocket size floor = (this x the fibre thickness)^2 (scale-free); with
+                              # the opening this mostly guards against speckle.
+    nonmyelin_min_px=150,     # ...but never below this absolute floor (px).
 )
 
 # Distinct per-axon colours (BGR); myelin is drawn as a darker shade of each.
@@ -169,6 +187,7 @@ PALETTE = [
     (60, 170, 255), (200, 130, 255), (255, 200, 60), (120, 220, 0),
 ]
 BUBBLE_COLOR = (0, 0, 255)   # red: holes / missing myelin
+NONMYELIN_COLOR = (0, 140, 255)  # orange: non-myelin pockets excluded from A_myelin (Phase 3)
 
 
 def _palette(i):
@@ -487,6 +506,68 @@ def _fill_edge_holes(fm, margin=40):
     return f[margin:-margin, margin:-margin]
 
 
+def _detect_nonmyelin_pockets(gf, axon_mask, myelin_mask, axons, P):
+    """Find bright non-myelin pockets embedded in the myelin band (Phase 3).
+
+    # BIOLOGICAL ASSUMPTION [A-NONMYELIN-BRIGHT] -- see docs/reference/assumptions.md:
+    # compact myelin is solidly dark; a genuine non-myelin pocket embedded in the
+    # sheath -- a vacuole, a split, or the extracellular inclusion the tracer marks
+    # 'orange / omit' -- is markedly BRIGHTER (at axoplasm / background level) and is
+    # a FAT blob, not a thin inter-lamellar gap. So within each fibre's assigned
+    # myelin, a bright region (brighter than the dark-myelin threshold) that survives
+    # a morphological opening whose radius scales with that fibre's OWN measured ring
+    # thickness is a pocket; the thin light lamellae and the thin periaxonal ring do
+    # not survive it. Scale-free (opening + size floor scale with the measured
+    # thickness -- no pixel constant) and g-ratio-prior-free. Fails on immature /
+    # lightly-stained myelin whose compact sheath is itself bright (no dark/bright
+    # separation); low-contrast splits barely brighter than the myelin are left in,
+    # conservatively (removing real myelin is worse than missing a faint pocket).
+
+    Returns a bool mask of the detected pockets (a subset of ``myelin_mask > 0``).
+    """
+    H, W = gf.shape
+    out = np.zeros((H, W), bool)
+    fill_pct = P.get('myelin_fill_percentile') or P['myelin_percentile']
+    bp = P.get('nonmyelin_bright_percentile')
+    bright_t = float(np.percentile(gf, bp if bp is not None else fill_pct))
+    for a in axons:
+        i = a['id']
+        fib_my = myelin_mask == i
+        am = axon_mask == i
+        if not fib_my.any() or not am.any():
+            continue
+        th = float(np.median(distance_transform_edt(~am)[fib_my]))
+        if th <= 0:
+            continue
+        # exclude the thin bright periaxonal ring hugging the axon: the tracer counts
+        # it as myelin, not a pocket (scale-free ring width from the fibre thickness).
+        rk = max(1, int(round(P['nonmyelin_ring_frac'] * th)))
+        ring = cv2.dilate(am.astype(np.uint8),
+                          cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (rk * 2 + 1,) * 2)
+                          ).astype(bool) & ~am
+        bright = fib_my & (gf >= bright_t) & ~ring
+        if not bright.any():
+            continue
+        # keep only FAT bright regions: those surviving an opening whose radius scales
+        # with this fibre's own ring thickness (kills thin light lamellae + the ring)
+        k = max(3, int(round(P['nonmyelin_open_frac'] * th)) | 1)
+        el = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+        opened = cv2.morphologyEx(bright.astype(np.uint8), cv2.MORPH_OPEN, el) > 0
+        # reconstruct each surviving fat core back to its full bright pocket
+        lab, _ = cc_label(bright)
+        seeds = set(np.unique(lab[opened])) - {0}
+        if not seeds:
+            continue
+        pockets = np.isin(lab, list(seeds))
+        floor = max(P['nonmyelin_min_px'], (P['nonmyelin_min_thick'] * th) ** 2)
+        pl, pn = cc_label(pockets)
+        for c in range(1, pn + 1):
+            cm = pl == c
+            if cm.sum() >= floor:
+                out |= cm
+    return out
+
+
 def segment(gray: np.ndarray, **overrides) -> dict:
     """Segment axon bodies + myelin bands and compute the area-based g-ratio.
 
@@ -572,7 +653,8 @@ def segment(gray: np.ndarray, **overrides) -> dict:
     blank = np.zeros((H, W), np.int32)
     if not cands:
         return dict(gf=gf, T=T, axons=[], axon_mask=blank, myelin_mask=blank,
-                    fiber_mask=blank, bubble=np.zeros((H, W), bool))
+                    fiber_mask=blank, bubble=np.zeros((H, W), bool),
+                    nonmyelin=np.zeros((H, W), bool))
 
     # myelin band = dark material touching an axon, within a thickness cap
     kd = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (P['touch_dilate'],) * 2)
@@ -768,8 +850,23 @@ def segment(gray: np.ndarray, **overrides) -> dict:
             a['area'], a['myelin_area'] = A_ax, A_my
             a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
 
+    # PHASE 3: detect bright non-myelin pockets inside the myelin band (the tracer's
+    # orange 'omit' regions) and exclude them from A_myelin, so the g-ratio measures
+    # true myelin material (A-NONMYELIN-BRIGHT). The pocket stays inside the fibre
+    # outline (it is a hole in the sheath, not outside it); only myelin_mask loses it.
+    nonmyelin = np.zeros((H, W), bool)
+    if P['detect_nonmyelin'] and axons:
+        nonmyelin = _detect_nonmyelin_pockets(gf, axon_mask, myelin_mask, axons, P)
+        myelin_mask = np.where(nonmyelin, 0, myelin_mask)
+        for a in axons:
+            A_ax = int((axon_mask == a['id']).sum())
+            A_my = int((myelin_mask == a['id']).sum())
+            A_nm = int((nonmyelin & (fiber_mask == a['id'])).sum())
+            a['area'], a['myelin_area'], a['nonmyelin_area'] = A_ax, A_my, A_nm
+            a['g'] = float(np.sqrt(A_ax / (A_ax + A_my))) if A_ax + A_my > 0 else float('nan')
+
     return dict(gf=gf, T=T, axons=axons, axon_mask=axon_mask, myelin_mask=myelin_mask,
-                fiber_mask=fiber_mask, bubble=bubble)
+                fiber_mask=fiber_mask, bubble=bubble, nonmyelin=nonmyelin)
 
 
 def render(gray: np.ndarray, seg: dict, alpha: float = 0.45, references=None) -> np.ndarray:
@@ -786,6 +883,8 @@ def render(gray: np.ndarray, seg: dict, alpha: float = 0.45, references=None) ->
         ov[seg['myelin_mask'] == a['id']] = tuple(int(c * 0.5) for c in col)
     out = cv2.addWeighted(ov, alpha, base, 1 - alpha, 0)
     out[seg['bubble']] = BUBBLE_COLOR
+    if 'nonmyelin' in seg and seg['nonmyelin'].any():
+        out[seg['nonmyelin']] = NONMYELIN_COLOR
 
     for a in seg['axons']:
         col = _palette(a['id'] - 1)

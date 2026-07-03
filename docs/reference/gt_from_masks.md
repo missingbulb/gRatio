@@ -33,7 +33,11 @@ code) and regenerate.
 ### red-boundary scheme (samples 1–2)
 - **purple** loop  → axon boundary (interior = axon area)
 - **red** loop     → myelin **outer** boundary (interior = whole fibre)
-- **orange**       → omit regions (detected, not yet subtracted)
+- **orange** loop  → non-myelin pocket to **omit** (Phase 3): the closed loops are
+  filled into `omit_labels`, warped to `_gt_omit.png`, and subtracted from the
+  myelin GT (`myelin = fibre − axon − omit`). Saturated-orange pen gated, so a
+  translucent fill is never read as one; the handwritten `#N` glyphs drop out below
+  `OMIT_MIN_REGION_FRAC`.
 - Fibres = marker-controlled watershed: each axon is a seed, an "outside" seed
   floods extracellular space, the red line is a ridge. Myelin = fibre − axon.
 
@@ -119,13 +123,14 @@ figure echoes the annotation. Render on the clean raw (not the crop) so the
 handwritten numbers don't show. Reference implementation:
 `render_gt()` in the session scratchpad `make_gt2.py`.
 
-## 6. If you change the number of axons
+## 6. If you change the number of axons or omit pockets
 
-Update the pinned count in **two** places or the self-check and tests fail:
-- `EXPECTED` in `extract_masks.py`
-- `EXPECTED_AXONS` in `tests/test_mask_extract.py`
-
-(currently `sample_01: 4`, `sample_02: 1`, `sample_03: 5`.)
+Update the pinned counts or the self-check and tests fail:
+- axons: `EXPECTED` in `extract_masks.py`, `EXPECTED_AXONS` in
+  `tests/test_mask_extract.py` (currently `sample_01: 4`, `sample_02: 1`,
+  `sample_03: 5`).
+- omit pockets: `EXPECTED_OMITS` in `tests/test_nonmyelin.py` (currently
+  `sample_01: 5`, `sample_02: 0`, `sample_03: 0`).
 
 ## Dependencies
 

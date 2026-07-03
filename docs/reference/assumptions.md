@@ -18,14 +18,18 @@ site that relies on it.
 | **A-SHEATHS-MEET-BY-THICKNESS** | Where two fibres touch, their sheaths meet in proportion to each fibre's *own* myelin thickness (not at the geometric midline). | Thickness-weighted territory: pixel → axon minimising `distance / own_thickness`. | Two touching fibres with very unequal *staining* (not thickness) could be mis-split; assumes thickness, not intensity, sets the meeting line. |
 | **A-AXON-CONVEX-BRIGHT** | An axon body is a bright, roughly convex compartment above a size floor. | `min_axon_frac`, `min_solidity`, `bright_margin` in axon detection. | Very small, dark, or highly non-convex axons (severe pathology) may be missed or split. |
 | **A-JUNCTION-MYELIN** | Where several fibres pack together, the dark material filling the interstitial pocket *between two adjacent sheaths* is myelin (their touching compact-myelin walls), not another dark structure. | `junction_fill` (ON) closes the inter-fibre gaps (scale-free kernel = `junction_fill_kfrac` × median fibre thickness) and adds back dense-dark pixels flanked by a *second* fibre. Reclaims junction myelin left beyond every axon's cap. | A dark non-myelin process (glial cytoplasm, debris) running through a junction would be absorbed as myelin. Strictly a no-op for isolated fibres (needs two fibres), so it cannot touch sample_02. |
+| **A-NONMYELIN-BRIGHT** | Compact myelin is *solidly dark*; a genuine non-myelin pocket embedded in the sheath — a vacuole, a split, or an extracellular inclusion (the tracer's orange *omit* region) — is markedly *brighter* (at axoplasm / background level) and is a *fat* blob, not a thin inter-lamellar gap. | `detect_nonmyelin` (ON, Phase 3): within each fibre's assigned myelin, a region brighter than the dark-myelin threshold that survives an opening scaled to that fibre's *own* measured ring thickness (`nonmyelin_open_frac`) is a pocket; it is excluded from `A_myelin`. Scale-free (opening + size floor scale with the measured thickness), g-ratio-prior-free. See `_detect_nonmyelin_pockets`. | Fails on immature / lightly-stained myelin whose compact sheath is itself bright (no dark/bright contrast to separate the pocket). Low-contrast splits only slightly brighter than the myelin are conservatively **left in** (the thickness-scaled opening drops them), since removing real myelin is worse than missing a faint pocket — e.g. sample_01's dim outer sliver and its thin edge-bay are not recovered. |
 
 ## Scale-dependence (equipment, not biology)
 
 Separately, several parameters are still in **raw pixels** and therefore tied to
 this data's magnification (nm/pixel): `speckle_min`, `close_fiber`,
-`myelin_close`, `bilateral`, `smooth_max_px`, `border_min_radius`. The
-outer-myelin *cap* is **not** among these — it scales with each axon's own
-measured thickness. Parsing the burn-in scale bar (currently only inpainted, not
+`myelin_close`, `bilateral`, `smooth_max_px`, `border_min_radius`, and the
+`nonmyelin_min_px` pocket speckle-floor (a lower bound only; the pocket size is
+otherwise `(nonmyelin_min_thick × thickness)²`, and the fatness gate is the
+thickness-scaled opening — both scale-free). The outer-myelin *cap* and the
+non-myelin-pocket detector's opening are **not** among these — they scale with
+each axon's own measured thickness. Parsing the burn-in scale bar (currently only inpainted, not
 read) would let the pixel parameters be re-expressed in physical units; see the
 F5 note in `continuation.md`.
 

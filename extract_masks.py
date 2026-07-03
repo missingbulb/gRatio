@@ -22,9 +22,9 @@ from gratio.mask_extract import extract, render_overlay
 
 # expected enclosed-region counts, from the user's hand numbering
 EXPECTED = {
-    "sample_01": {"axons": 4},   # + 4 orange omit regions (not counted here)
-    "sample_02": {"axons": 1},
-    "sample_03": {"axons": 5},
+    "sample_01": {"axons": 4, "omits": 5},   # 4 purple axons + 5 orange non-myelin pockets
+    "sample_02": {"axons": 1, "omits": 0},
+    "sample_03": {"axons": 5, "omits": 0},
 }
 
 
@@ -61,13 +61,14 @@ def run(path, outdir):
             w.writerow(["fiber", r["id"], r["area_px"], f"{r['cx']:.1f}", f"{r['cy']:.1f}"])
 
     exp = EXPECTED.get(key, {}).get("axons")
-    got = len(ext.axons)
-    ok = (exp is None) or (got == exp)
+    exp_om = EXPECTED.get(key, {}).get("omits")
+    got, got_om = len(ext.axons), len(ext.omits)
+    ok = ((exp is None) or (got == exp)) and ((exp_om is None) or (got_om == exp_om))
     tag = "OK " if ok else "XX "
     exps = "?" if exp is None else str(exp)
-    orange_px = int((ext.orange_mask > 0).sum())
+    exps_om = "?" if exp_om is None else str(exp_om)
     print(f"  {tag}{key}: axons={got} (expect {exps})  fibers={len(ext.fibers)}"
-          f"  orange_px={orange_px}")
+          f"  omit_pockets={got_om} (expect {exps_om})")
     return ok
 
 

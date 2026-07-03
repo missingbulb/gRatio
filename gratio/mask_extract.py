@@ -5,7 +5,8 @@ filled label masks. Two annotation schemes are supported and auto-detected:
 
     purple  -> axon boundary   (interior = the axon area)
     red     -> myelin outer boundary (interior = the whole fibre area)
-    orange  -> regions to omit  (detected and reported, not yet used)
+    orange  -> non-myelin pockets to omit; the closed loops are FILLED into
+               `omit_labels` (Phase 3) and subtracted from the myelin area
 
 Fibres are the marker-controlled watershed of the axons with the red line burned
 in as a ridge.
@@ -54,6 +55,13 @@ FILL_HUE_TOL = 12           # circular hue window when growing one neuron's fill
 # (drops handwritten digits and stray ink specks)
 MIN_REGION_FRAC = 0.004
 
+# the orange 'omit' pockets are smaller than axons, so they get a lower size floor;
+# it still comfortably clears the handwritten #N glyphs (open strokes, tiny filled area)
+OMIT_MIN_REGION_FRAC = 0.001
+# the omit loops are drawn with a saturated pen; require that saturation so a
+# translucent per-neuron colour fill (per-neuron-fill scheme) is never mistaken for one
+OMIT_MIN_SAT = 120
+
 
 @dataclass
 class Extraction:
@@ -63,8 +71,10 @@ class Extraction:
     fiber_labels: np.ndarray         # int32, 0 = bg, 1..M per fibre
     myelin_mask: np.ndarray          # uint8, fibre minus axon (0/255)
     orange_mask: np.ndarray          # uint8, raw omit ink (0/255)
+    omit_labels: np.ndarray          # int32, 0 = bg, 1..K per FILLED omit pocket
     axons: list = field(default_factory=list)   # dicts: id, area_px, cx, cy
     fibers: list = field(default_factory=list)
+    omits: list = field(default_factory=list)   # dicts: id, area_px, cx, cy
 
 
 def _ink_mask(hsv, hue_range):
@@ -232,6 +242,35 @@ def _myelin_by_fill(hsv, axon_labels, axons):
     return myelin_labels
 
 
+def _omit_from_loops(hsv, shape):
+    """Fill the closed orange 'omit' loops into FILLED pocket labels.
+
+    The tracer draws each non-myelin pocket as a closed orange loop with a small
+    handwritten #N inside. We fill the loops (so the pocket interior is the region)
+    and drop anything below OMIT_MIN_REGION_FRAC, which discards the digit glyphs
+    (open strokes with a tiny filled interior). A saturated-orange gate keeps a
+    translucent per-neuron colour fill from ever being read as an omit loop.
+    """
+    h, w = shape
+    H, S, V = hsv[..., 0], hsv[..., 1], hsv[..., 2]
+    ink = ((H >= ORANGE_HUE[0]) & (H <= ORANGE_HUE[1]) &
+           (S >= OMIT_MIN_SAT) & (V >= MIN_VAL)).astype(np.uint8) * 255
+    min_area = OMIT_MIN_REGION_FRAC * h * w
+    filled = _fill_closed_loops(ink, min_area)
+    n, lab, stats, cent = cv2.connectedComponentsWithStats(filled, 8)
+    labels = np.zeros((h, w), np.int32)
+    omits = []
+    oid = 0
+    for i in range(1, n):
+        if stats[i, cv2.CC_STAT_AREA] < min_area:
+            continue
+        oid += 1
+        labels[lab == i] = oid
+        omits.append({"id": oid, "area_px": int(stats[i, cv2.CC_STAT_AREA]),
+                      "cx": float(cent[i][0]), "cy": float(cent[i][1])})
+    return labels, omits
+
+
 def _fibers_from_fill(axon_labels, myelin_labels, axons, close_k=15):
     """Fibre = axon + its myelin fill, closed and hole-filled per neuron."""
     h, w = axon_labels.shape
@@ -271,11 +310,13 @@ def extract(bgr, stem=""):
         fiber_labels, fibers = _fibers_from_fill(axon_labels, myelin_labels, axons)
 
     myelin = np.where((fiber_labels > 0) & (axon_labels == 0), 255, 0).astype(np.uint8)
+    # Phase 3: the filled orange 'omit' pockets (non-myelin inside the myelin layer).
+    omit_labels, omits = _omit_from_loops(hsv, (h, w))
 
     return Extraction(stem=stem, shape=(h, w),
                       axon_labels=axon_labels, fiber_labels=fiber_labels,
-                      myelin_mask=myelin, orange_mask=orange,
-                      axons=axons, fibers=fibers)
+                      myelin_mask=myelin, orange_mask=orange, omit_labels=omit_labels,
+                      axons=axons, fibers=fibers, omits=omits)
 
 
 # --- visualisation -----------------------------------------------------------

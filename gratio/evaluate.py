@@ -60,10 +60,28 @@ def match_axons(pred_labels, gt_labels, min_iou=0.3):
     }
 
 
+def omit_scores(pred_nonmyelin, gt_omit):
+    """Overlap of the predicted non-myelin pockets vs the tracer's omit GT.
+
+    ``recall`` = fraction of GT omit area recovered, ``precision`` = fraction of
+    predicted pocket area that is real omit. On samples with no annotated pockets
+    the GT is empty; recall/precision are reported as 1.0 when both are empty.
+    """
+    p, g = pred_nonmyelin.astype(bool), gt_omit.astype(bool)
+    inter = int((p & g).sum())
+    return {
+        "iou": iou(p, g),
+        "recall": float(inter / g.sum()) if g.sum() else (1.0 if not p.any() else 0.0),
+        "precision": float(inter / p.sum()) if p.sum() else 1.0,
+        "pred_px": int(p.sum()), "gt_px": int(g.sum()),
+    }
+
+
 def evaluate(seg, gt):
     """seg: gratio.segment() output; gt: registered ground-truth dict.
 
-    Returns semantic scores, detection stats, and per-match myelin IoU.
+    Returns semantic scores, detection stats, per-match myelin IoU, and (when the
+    GT carries an ``omit_mask``) the non-myelin-pocket overlap under ``omit``.
     """
     pred = {"axon": seg["axon_mask"] > 0,
             "myelin": seg["myelin_mask"] > 0,
@@ -78,4 +96,8 @@ def evaluate(seg, gt):
         gm = gt["myelin_mask"] > 0
         gfib = gt["fiber_labels"] == m["gt_id"]
         m["myelin_iou"] = iou(pm, gm & gfib)
-    return {"semantic": sem, "detection": det}
+    out = {"semantic": sem, "detection": det}
+    if "omit_mask" in gt:
+        out["omit"] = omit_scores(seg.get("nonmyelin", np.zeros_like(pred["myelin"])),
+                                  gt["omit_mask"] > 0)
+    return out
