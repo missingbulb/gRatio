@@ -1,23 +1,25 @@
 # Research Project Working Procedures — a portable playbook
 
-This document defines **how the owner wants a research project run**. It was
-distilled from the working process, requirements, and session history of an
-image-analysis project, but it is written to be **reused as the starting
-procedure for a new research project** — the specifics of any one project have
-been stripped out and replaced with the durable pattern.
+This document defines **how the owner wants a research project run**, as a
+**bootstrap to drop into a new research project** from day one. It is written to
+be project-agnostic: it carries the durable working procedures and none of the
+subject matter, methods, or results of any particular study.
 
-It is aimed at the recurring class of project it grew from: **run a
-computer-vision / image-analysis algorithm over a set of similarly-formatted
-inputs, score it against user-provided ground truth, and improve the algorithm
-in repeatable, reviewable iterations.** Where a rule is about images or CV
-specifically it says so; the workflow, ground-truth discipline, anti-overfitting
-stance, and session hygiene apply to research work broadly.
+It is aimed at the recurring class of research it is meant for: **run an
+algorithm over a set of similarly-formatted inputs, score it against
+user-provided ground truth, and improve the algorithm in repeatable, reviewable
+iterations.** Image analysis / computer vision is the archetypal case and the
+examples lean that way, but the workflow, ground-truth discipline,
+anti-overfitting stance, and session hygiene apply to research work broadly —
+read "algorithm", "input", and "render" as whatever they mean for your project.
 
 Treat it as a **default to adapt, not a contract**. When a new project needs a
 rule this one doesn't have, add it; when a rule here doesn't fit, say why and
-drop it. The one non-negotiable is the spirit: **show the work visually, prove
-each change against ground truth, never overfit the learning set, and leave the
-project resumable.**
+drop it. As you work a real project, replace the generic phrasing with that
+project's concrete specifics (its inputs, metrics, invariants) in *that
+project's own* docs — keep this bootstrap generic so it stays reusable. The one
+non-negotiable is the spirit: **show the work visually, prove each change against
+ground truth, never overfit the learning set, and leave the project resumable.**
 
 ---
 
@@ -131,17 +133,17 @@ metric.
   unavoidably tied to the current data's scale/resolution, **isolate and label
   it** as scale-dependent so it is the first thing revisited on new-scale data.
 - **Name the hard constraint the task cannot trade away**, and tune to it first.
-  (In the source project: *recall* — a missed object corrupts its neighbour, so
-  false negatives are unacceptable; tuning targets recall = 1.0 with no false
-  positives *first*, then maximises overlap.) Every project should identify its
-  equivalent non-negotiable and optimise the softer metrics only underneath it.
+  Some projects have a metric that is non-negotiable (e.g. a failure mode whose
+  cost dominates all others); identify yours, hold it at its required level
+  *first*, and optimise the softer metrics only underneath it. Make it explicit
+  so a later tuning pass doesn't quietly trade it away.
 - **Keep a registry of domain assumptions, each with a failure mode.** Choices
   that encode a prior about the *subject or the instrument* (not pure
-  image-processing) are named, located in the code with an inline tag, and given
-  an explicit "how it fails on mismatched data" note. When a new input looks
-  wrong, the first diagnostic is *"which assumption did this input break?"* — and
-  that is only fast if the assumptions are written down. Flag the thinly-supported
-  ones (e.g. calibrated on a single example) honestly.
+  processing) are named, located in the code with an inline tag, and given an
+  explicit "how it fails on mismatched data" note. When a new input looks wrong,
+  the first diagnostic is *"which assumption did this input break?"* — and that is
+  only fast if the assumptions are written down. Flag the thinly-supported ones
+  (e.g. calibrated on a single example) honestly.
 - **Guard the wins with regression tests.** An input the owner has blessed as
   "very good" must not silently regress when you tune for another. Pin its score.
 
@@ -149,9 +151,10 @@ metric.
 
 ## 5. Repeatable improvement iterations — the numbered notes, and *definition of done*
 
-Each accepted change is recorded as a **numbered iteration note** (the source
-project calls them "R-notes") in a running method-narrative doc. The point is
-that **the next session does not re-derive what this one already learned.**
+Each accepted change is recorded as a **numbered iteration note** (pick a short
+tag and stick to it, e.g. `R1, R2, …`) in a running method-narrative doc. The
+point is that **the next session does not re-derive what this one already
+learned.**
 
 An iteration note captures:
 - **What was wrong** (the observed failure, ideally with the diagnostic that
@@ -179,8 +182,8 @@ An iteration note captures:
 
 - **Separate work into explicit phases**, each with a bounded deliverable, and
   say which phase a piece of work belongs to. Defer the hard/advanced piece
-  explicitly rather than half-building it (the source project deferred its final
-  target quantity until the intermediate segmentation was trusted).
+  explicitly rather than half-building it — e.g. get an intermediate output
+  trusted before building the final quantity that depends on it.
 - **Distinguish research spikes from the maintained pipeline.** Exploratory
   scripts are worth keeping for reference, but the repo map must make clear what
   "the pipeline" actually is versus what was an older spike, so a new session
@@ -200,9 +203,10 @@ When a paper, tool, or reference method matters to the project:
   values** you can validate your own outputs against.
 - **Explicitly record where your approach diverges from the reference and why.**
   The divergence is often the whole point of the project; make it legible.
-- **State what you deliberately omitted** (wet-lab protocol, per-experiment
-  statistics, acknowledgements, etc.) and that you cross-checked against the full
-  text — so a later reader trusts the summary is complete for its purpose.
+- **State what you deliberately omitted** (material not relevant to the
+  algorithm — e.g. procedural/experimental setup detail, incidental statistics,
+  acknowledgements) and that you cross-checked against the full text — so a later
+  reader trusts the summary is complete for its purpose.
 - Note that upload paths for source PDFs are **session-specific and won't
   persist**; the notes file is the durable artifact, not the upload.
 
@@ -214,11 +218,10 @@ When a paper, tool, or reference method matters to the project:
   figures that explain a method or a definition. Keep the two roles distinct and
   store extracted figures alongside the notes that reference them.
 - **Render documents with a library, not an assumed system binary.** The
-  environment often lacks common tools (e.g. a PDF rasterizer like poppler /
-  `pdftoppm`); use an in-process library instead (the source project uses
-  PyMuPDF / `fitz`). Locate embedded raster images and render just the region you
-  need, at a zoom high enough to read fine annotation, with a little padding to
-  catch ink drawn outside the frame.
+  environment often lacks common tools (e.g. a PDF rasterizer such as poppler /
+  `pdftoppm`); use an in-process library instead. Locate embedded raster images
+  and render just the region you need, at a zoom high enough to read fine
+  annotation, with a little padding to catch ink drawn outside the frame.
 - **Verify identity when an extracted image should match an existing input**
   (e.g. an annotated crop over an original) by an exact pixel diff — so you know
   an annotation set is a labelling of the *same* data, not a new input.
@@ -250,13 +253,13 @@ When a paper, tool, or reference method matters to the project:
 ## 10. Environment limitations — stay lightweight
 
 - **A fresh container has nothing installed.** Assume dependencies must be
-  installed each session, and keep the dependency set **small and classic** —
-  the source project runs on `opencv` / `numpy` / `scipy` and deliberately does
-  **not** pull heavy ML frameworks. Prefer a classic-CV / lightweight solution
-  that installs in seconds and runs anywhere.
+  installed each session, and keep the dependency set **small and lightweight** —
+  favour a compact set of core libraries over heavy frameworks (e.g. large ML
+  stacks) that are slow to install and awkward to run anywhere. Prefer a
+  lightweight solution that installs in seconds and runs anywhere.
 - **When a heavy or learned approach is genuinely the right tool, treat it as a
   gated, isolated route** (documented, opt-in, scoped to the cases that need it)
-  rather than a new baseline dependency — and prove the classical route is
+  rather than a new baseline dependency — and prove the lightweight route is
   exhausted first.
 - **Route around missing system binaries with libraries** (see §8). Document the
   exact install lines and any "install ad hoc, not in requirements" tools in the
@@ -271,16 +274,14 @@ first-class experiments:
 
 - **Take the suggestion seriously even when the project has declared a direction
   "exhausted."** A suggestion may belong to a *different family* than everything
-  tried so far (e.g. a *constructive* method where all prior attempts were
-  *subtractive*), which is exactly when it can break a wall the previous family
-  couldn't.
+  tried so far, which is exactly when it can break a wall the previous family
+  couldn't. "We already tried X" rarely covers a genuinely different approach.
 - **Evaluate it the same way as any change**: diagnose the wall it targets, build
   the evidence that the wall is real (or isn't), prototype, and show a comparison.
 - **Document the outcome fully**, including the routes that hit a wall and *why*
-  (e.g. "these four local cues all collapse into the same false-positive /
-  false-negative trade-off"). If the idea needs capabilities the environment
-  won't allow (§10), record the concrete route to try when that changes, so the
-  thread is resumable rather than lost.
+  (name the specific trade-off or signal that defeated them). If the idea needs
+  capabilities the environment won't allow (§10), record the concrete route to
+  try when that changes, so the thread is resumable rather than lost.
 - **Complementary routes are not competitors.** Two methods can attack the same
   problem from different angles; keep both documented and say how they relate.
 
