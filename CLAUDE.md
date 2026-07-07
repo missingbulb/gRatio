@@ -182,3 +182,5 @@ create it from `main` if missing. Commit with clear messages; push with
   `macaque_cc` it detects 0 axons full-frame and only the largest 2–3 in a crop
   (`validate_external.py`: crops mean |Δg| ≈ 0.16). A scale-aware / multi-scale
   detection pass is the unlock for the external corpus (R34).
+
+@.claudinite/CLAUDE.md
