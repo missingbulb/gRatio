@@ -4,3 +4,6 @@ __pycache__/
 venv/
 .DS_Store
 scratchpad/
+/.claudinite/*
+!/.claudinite/.gitkeep
+/.claudinite.new/

@@ -1,0 +1,4 @@
+DO NOT DELETE. This file keeps .claudinite/ committed as a signal that this
+project mounts Claudinite (https://github.com/missingbulb/Claudinite). The
+folder's contents are auto-populated (and gitignored) by
+.claude/hooks/sync-claudinite.sh at session start; only this marker is tracked.
