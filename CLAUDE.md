@@ -160,12 +160,6 @@ Gotcha: translucent fills overlap the pen in *hue* but separate by *saturation*
 - `docs/reference/lamella_continuation.md` — the lamella-tracing outer-boundary
   refinement (`gratio/lamella.py`, single-neuron images): method, evidence, standing.
 
-## Git
-
-Develop on the branch named in the task (e.g. `claude/sample-three-ground-truth-nhvtbw`);
-create it from `main` if missing. Commit with clear messages; push with
-`git push -u origin <branch>`. Do **not** open a PR unless asked.
-
 ## Known open items
 
 - Malformed-axon inner boundary (sample_01 #2 arc, sample_03 #5 inner) needs a
