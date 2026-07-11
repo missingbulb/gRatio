@@ -5,5 +5,5 @@ venv/
 .DS_Store
 scratchpad/
 /.claudinite/*
-!/.claudinite/.gitkeep
 /.claudinite.new/
+!/.claudinite/sync-claudinite.sh
