@@ -1,7 +1,11 @@
 {
   "packs": [
+    "basics",
     "research-project"
   ],
   "rules": {},
-  "accept": []
+  "accept": [],
+  "maintenance": {
+    "delivery": "push"
+  }
 }
