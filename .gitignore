@@ -6,4 +6,8 @@ venv/
 scratchpad/
 /.claudinite/*
 /.claudinite.new/
-!/.claudinite/sync-claudinite.sh
+!/.claudinite/mount/
+/.claudinite/mount/*
+!/.claudinite/mount/sync-claudinite.sh
+/.claudinite-hooks.log
+/.claudinite-hooks.log.tmp

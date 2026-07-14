@@ -1,7 +1,9 @@
 {
   "packs": [
     "basics",
-    "research-project"
+    "research-project",
+    "tidy-repo",
+    "grow_with_claudinite"
   ],
   "rules": {},
   "accept": [],
