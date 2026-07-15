@@ -9,22 +9,12 @@ Two purposes:
 
 2. **Where individual sub-phases might reach further.** Several steps solve a
    *generic* image / morphometry problem that recurs elsewhere in neurobiology.
-   This document is the **only** place we record that. It is a map of pointers, not
-   a roadmap and not a claim of correctness — see the rule below.
-
-## The rule (project convention)
-
-> When a sub-phase of the pipeline plausibly applies to another known problem in
-> neurobiology, **note it here** as a short pointer — a direction worth someone's
-> attention, not a validated result, and it need **not** be certain to be worth
-> recording. **Keep this speculation out of the algorithm itself**: code and inline
-> comments stay strictly about the g-ratio task and its biological assumptions
-> (`A-*`). This side document is the sole home for "this piece could also be useful
-> for …". Add an entry whenever you build or substantially change a sub-phase.
-
-Rationale: the pipeline's value is the g-ratio; keeping cross-domain ideas out of
-the code keeps the algorithm legible and honest about what it is *for*, while not
-losing genuinely useful observations that surface while building it.
+   This document is the **only** place we record that — the out-of-band home the
+   canon's *record cross-domain applicability out-of-band* rule requires
+   (`research-project` RULES.md §12): the algorithm code and inline comments stay
+   strictly about the g-ratio task and its `A-*` biological assumptions, and a
+   pointer entry lands here whenever a sub-phase is built or substantially
+   changed. It is a map of pointers, not a roadmap and not a claim of correctness.
 
 ## The pipeline in sub-phases (as built)
 
