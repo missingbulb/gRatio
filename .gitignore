@@ -5,9 +5,10 @@ venv/
 .DS_Store
 scratchpad/
 /.claudinite/*
-/.claudinite.new/
 !/.claudinite/mount/
 /.claudinite/mount/*
 !/.claudinite/mount/sync-claudinite.sh
+!/.claudinite/local_packs/
+/.claudinite.new/
 /.claudinite-hooks.log
 /.claudinite-hooks.log.tmp
