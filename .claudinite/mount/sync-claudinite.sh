@@ -1,8 +1,9 @@
 #!/bin/bash
-# DO NOT DELETE. In a consuming repo this tracked file is both the Method B sync
-# hook and the committed signal that the project mounts Claudinite
-# (https://github.com/missingbulb/Claudinite) — fleet maintenance discovers
-# opted-in repos by its presence on the default branch. The synced corpus under
+# DO NOT DELETE. In a consuming repo this tracked file is the LEGACY
+# (fetch-at-session-start) sync hook for Claudinite
+# (https://github.com/missingbulb/Claudinite); it is retired per repo by the
+# vendored-mount flip (mount/DESIGN.md) — fleet membership keys on the tracked
+# .claudinite-checks.json, not on this file. The synced corpus under
 # .claudinite/ is gitignored; the tracked exceptions are this file — at
 # .claudinite/mount/sync-claudinite.sh — and the repo's own
 # .claudinite/local_packs/ (project packs), both preserved across the sync's dir
