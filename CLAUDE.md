@@ -177,6 +177,6 @@ Gotcha: translucent fills overlap the pen in *hue* but separate by *saturation*
   (`validate_external.py`: crops mean |Δg| ≈ 0.16). A scale-aware / multi-scale
   detection pass is the unlock for the external corpus (R34).
 
-@.claudinite/CLAUDE.md
+@.claudinite/shared/CLAUDE.md
 
-> Claudinite self-check: if the `@.claudinite/CLAUDE.md` import above did not resolve (the `.claudinite/` payload is absent — e.g. no `.claudinite/README.md`), the Claudinite harness is **not active** this session. Treat it as not loaded and confirm with the user before substantive work, since a launch-layer hook failure can eat the sync hook's own not-loaded directive.
+> Claudinite self-check: if the `@.claudinite/shared/CLAUDE.md` import above did not resolve (no `.claudinite/shared/CLAUDE.md` in this checkout), the Claudinite harness is **not active** this session — a broken or partial checkout. Treat it as not loaded and confirm with the user before substantive work.

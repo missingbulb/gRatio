@@ -1,7 +1,12 @@
 {
   "packs": [
     "basics",
-    { "id": "barriers", "via": ["basics"] },
+    {
+      "id": "barriers",
+      "via": [
+        "basics"
+      ]
+    },
     "research-project",
     "tidy-repo",
     "grow_with_claudinite"
@@ -10,5 +15,9 @@
   "accept": [],
   "maintenance": {
     "delivery": "push"
+  },
+  "claudinite": {
+    "updated": "2026-07-21T10:00:21.871Z",
+    "ref": "9a680934281f97cb61f280cca6d8f6a155750c8f"
   }
 }
