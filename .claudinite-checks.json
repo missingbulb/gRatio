@@ -11,13 +11,11 @@
     "tidy-repo",
     "grow_with_claudinite"
   ],
-  "rules": {},
-  "accept": [],
   "maintenance": {
-    "delivery": "push"
+    "delivery": "auto-merge"
   },
   "claudinite": {
-    "updated": "2026-07-21T10:00:21.871Z",
-    "ref": "9a680934281f97cb61f280cca6d8f6a155750c8f"
+    "updated": "2026-07-21T22:51:46.595Z",
+    "ref": "d6bca9351cd0396cf068ea1199c6475993623a5d"
   }
 }

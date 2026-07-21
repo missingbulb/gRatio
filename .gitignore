@@ -4,8 +4,6 @@ __pycache__/
 venv/
 .DS_Store
 scratchpad/
-/.claudinite/*
 !/.claudinite/shared/
-!/.claudinite/local_packs/
 /.claudinite-hooks.log
 /.claudinite-hooks.log.tmp
