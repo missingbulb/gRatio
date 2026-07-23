@@ -58,7 +58,18 @@ function vendoredSet(root, files) {
 // `claudinite` is the vendored-mount stamp — { updated: "<ISO datetime>", ref: "<sha>" },
 // written by the nightly update pass, selecting which migration notes still apply
 // (vendoring/DESIGN.md owns the model); the checks engine itself only tolerates it.
-export const CONFIG_KEYS = ['packs', 'rules', 'accept', 'sharedConstants', 'packConfig', 'maintenance', 'claudinite'];
+// `schedule` is the per-repo maintenance anchor the vendored hourly scheduler
+// reads (per-project-scheduling DESIGN §2) — { dailyHour, weeklyDay, monthlyDay },
+// all UTC. Absence means the documented defaults, so an omitted key is not an
+// error; a present one is range-validated at load below. Its declaration is also
+// the per-repo cutover marker during the scheduling rollout (MIGRATION Phase 0.6).
+export const CONFIG_KEYS = ['packs', 'rules', 'accept', 'sharedConstants', 'packConfig', 'maintenance', 'claudinite', 'schedule'];
+
+// The keys a `schedule` object may carry, and the canonical weekday vocabulary
+// (mirrored from engine/scheduler/slots.mjs WEEKDAYS — kept as a literal here so
+// the checks layer does not import the scheduler engine).
+const SCHEDULE_KEYS = ['dailyHour', 'weeklyDay', 'monthlyDay'];
+const SCHEDULE_WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 // The properties a `packs` entry object may carry: the pack's parameters
 // (`config`), its adoption-interview answers (`answers` — the owner's verbatim
@@ -88,7 +99,7 @@ export const PACK_ENTRY_KEYS = ['id', 'config', 'answers', 'rules', 'accept', 'v
 // read this one shape regardless of which form the file used.
 export function loadConfig(root) {
   const path = join(root, '.claudinite-checks.json');
-  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, errors: [] };
+  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, schedule: null, errors: [] };
   if (!existsSync(path)) return empty;
 
   let raw;
@@ -199,6 +210,34 @@ export function loadConfig(root) {
     if (entry.config !== undefined) packConfig[entry.id] = entry.config;
   }
 
+  // --- schedule: the per-repo maintenance anchor (UTC). Range-validated at
+  // load so a bad anchor is a settings error like any other; absence is legal
+  // (the scheduler fills the documented defaults). The value passes through
+  // unchanged for the scheduler to normalize.
+  let schedule = null;
+  if (raw.schedule !== undefined) {
+    if (raw.schedule === null || typeof raw.schedule !== 'object' || Array.isArray(raw.schedule)) {
+      errors.push({ what: '"schedule" must be an object', fix: 'e.g. { "dailyHour": 4, "weeklyDay": "Sun", "monthlyDay": 1 }' });
+    } else {
+      for (const key of Object.keys(raw.schedule)) {
+        if (!SCHEDULE_KEYS.includes(key)) {
+          errors.push({ what: `unknown "schedule" setting "${key}"`, fix: `remove it or fix the name — valid schedule settings: ${SCHEDULE_KEYS.join(', ')}` });
+        }
+      }
+      const { dailyHour, weeklyDay, monthlyDay } = raw.schedule;
+      if (dailyHour !== undefined && !(Number.isInteger(dailyHour) && dailyHour >= 0 && dailyHour <= 23)) {
+        errors.push({ what: `"schedule.dailyHour" must be an integer 0–23 (UTC), got ${JSON.stringify(dailyHour)}`, fix: 'set an hour of the day, 0 through 23' });
+      }
+      if (weeklyDay !== undefined && !SCHEDULE_WEEKDAYS.includes(weeklyDay)) {
+        errors.push({ what: `"schedule.weeklyDay" must be one of ${SCHEDULE_WEEKDAYS.join(', ')}, got ${JSON.stringify(weeklyDay)}`, fix: 'name a weekday, e.g. "Sun"' });
+      }
+      if (monthlyDay !== undefined && !(Number.isInteger(monthlyDay) && monthlyDay >= 1 && monthlyDay <= 31)) {
+        errors.push({ what: `"schedule.monthlyDay" must be an integer 1–31, got ${JSON.stringify(monthlyDay)}`, fix: 'set a day of the month, 1 through 31 (clamped to the month length)' });
+      }
+      schedule = raw.schedule;
+    }
+  }
+
   return {
     packs,
     packEntries,
@@ -206,6 +245,7 @@ export function loadConfig(root) {
     accept,
     sharedConstants: Array.isArray(raw.sharedConstants) ? raw.sharedConstants : [],
     packConfig,
+    schedule,
     errors,
   };
 }
@@ -263,6 +303,12 @@ export function buildContext({ root, mode = 'changed', baseOverride = null, tran
   // return [] when this is null. Parsed lazily and cached — most sweeps never ask.
   let conversationCache;
 
+  // Checks are read-only over an immutable snapshot of the tree, so file and
+  // base-blob reads are cached for the sweep: many rules re-read the same files,
+  // and each readBase is otherwise a git subprocess.
+  const readCache = new Map();
+  const readBaseCache = new Map();
+
   return {
     root,
     mode,
@@ -279,7 +325,12 @@ export function buildContext({ root, mode = 'changed', baseOverride = null, tran
 
     exists: (path) => existsSync(join(root, path)),
     read(path) {
-      try { return readFileSync(join(root, path), 'utf8'); } catch { return null; }
+      if (!readCache.has(path)) {
+        let text;
+        try { text = readFileSync(join(root, path), 'utf8'); } catch { text = null; }
+        readCache.set(path, text);
+      }
+      return readCache.get(path);
     },
 
     // File content at the scoping base (the merge-base with the base branch), or
@@ -289,7 +340,8 @@ export function buildContext({ root, mode = 'changed', baseOverride = null, tran
     // commas make appending an array element re-touch the previous line).
     readBase(path) {
       if (!mergeBase) return null;
-      return gitTry(root, 'show', `${mergeBase}:${path}`);
+      if (!readBaseCache.has(path)) readBaseCache.set(path, gitTry(root, 'show', `${mergeBase}:${path}`));
+      return readBaseCache.get(path);
     },
 
     // Added lines of one file relative to the scoping base (untracked file = every line).
