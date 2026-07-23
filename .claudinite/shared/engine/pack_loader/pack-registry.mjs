@@ -6,11 +6,18 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const canonRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 const packsDir = join(canonRoot, 'packs');
 
-// A repo's own packs live at <root>/.claudinite/local_packs/<name>/ — tracked
+// A repo's own packs live at <root>/.claudinite/local/packs/<name>/ — tracked
 // project content, discovered and run by the same engine as the mounted canon
-// packs. This is where the subdir sits relative to a consumer's checkout root.
-export const LOCAL_PACKS_SUBDIR = join('.claudinite', 'local_packs');
+// packs, and sitting at the same uniform depth as the shared mount
+// (.claudinite/*/packs/). This is the canonical subdir relative to a consumer's
+// checkout root. The pre-2026-07 layout put them one level up at
+// .claudinite/local_packs/; discovery scans BOTH roots until the rename has
+// propagated fleet-wide (Phase 4 drops the legacy scan), so a repo that hasn't
+// been git-mv'd yet still loads.
+export const LOCAL_PACKS_SUBDIR = join('.claudinite', 'local', 'packs');
+export const LEGACY_LOCAL_PACKS_SUBDIR = join('.claudinite', 'local_packs');
 export const localPacksDir = (root) => join(resolve(root), LOCAL_PACKS_SUBDIR);
+export const legacyLocalPacksDir = (root) => join(resolve(root), LEGACY_LOCAL_PACKS_SUBDIR);
 
 // Where a consumer materializes the vendored canon (vendoring/DESIGN.md): the
 // corpus mirrored at canon-relative paths under this subdir. Tracked files in
@@ -29,9 +36,52 @@ export const SHARED_SUBDIR = join('.claudinite', 'shared');
 // separate skills collection to own or cross-declare). A bundled skill's
 // checks.mjs is gathered onto `skillChecks` and run by the runner only when the
 // pack is active.
-async function scanPackDir(dir, { local }, errors) {
+// A pack's declared adoption questions, validated: `questions` (an optional
+// manifest field any pack may carry) must be an array of { id, prompt, distill? }
+// with non-empty string ids and prompts, ids unique within the pack. A malformed
+// entry is reported and skipped — one bad question must not mute the pack's valid
+// ones (the registry's fail-soft posture). This is generic manifest-shape
+// validation, so it lives with pack loading (scanPackDir reports the errors as
+// load faults); the interview machinery imports it to read the valid questions.
+export function packQuestions(pack) {
+  const questions = [];
+  const errors = [];
+  const src = pack.questions;
+  if (src === undefined || src === null) return { questions, errors };
+  if (!Array.isArray(src)) {
+    errors.push({
+      what: `the "${pack.id}" pack declares a non-array "questions"`,
+      fix: 'make questions an array of { id, prompt } entries',
+    });
+    return { questions, errors };
+  }
+  const seen = new Set();
+  for (const q of src) {
+    if (q === null || typeof q !== 'object' || typeof q.id !== 'string' || !q.id
+      || typeof q.prompt !== 'string' || !q.prompt) {
+      errors.push({
+        what: `the "${pack.id}" pack declares a malformed question ${JSON.stringify(q)}`,
+        fix: 'give each question a non-empty string "id" and "prompt"',
+      });
+      continue;
+    }
+    if (seen.has(q.id)) {
+      errors.push({
+        what: `the "${pack.id}" pack declares question id "${q.id}" twice`,
+        fix: 'question ids must be unique within the pack — rename one',
+      });
+      continue;
+    }
+    seen.add(q.id);
+    questions.push(q);
+  }
+  return { questions, errors };
+}
+
+async function scanPackDir(dir, { local, subdir }, errors) {
   const out = [];
   if (!existsSync(dir)) return out;
+  const label = subdir ?? (local ? LOCAL_PACKS_SUBDIR : 'packs');
   // A non-directory (or unreadable path) at a scan root is a fault to REPORT, not
   // a crash — the whole point of discovery being fail-soft is a diagnostic instead
   // of a dead runner (the SessionStart hooks fail soft; the runner surfaces it).
@@ -41,15 +91,15 @@ async function scanPackDir(dir, { local }, errors) {
       .filter((d) => d.isDirectory()).map((d) => d.name).sort();
   } catch (e) {
     errors.push({
-      what: `${local ? LOCAL_PACKS_SUBDIR : 'packs/'} is not a readable directory: ${e.message}`,
-      fix: `make ${local ? LOCAL_PACKS_SUBDIR : 'packs/'} a directory (or remove it)`,
+      what: `${label} is not a readable directory: ${e.message}`,
+      fix: `make ${label} a directory (or remove it)`,
       dir,
     });
     return out;
   }
   for (const name of names) {
     const packDir = join(dir, name);
-    const rel = local ? `${LOCAL_PACKS_SUBDIR}/${name}` : `packs/${name}`;
+    const rel = local ? `${label}/${name}` : `packs/${name}`;
     const manifest = join(packDir, 'pack.mjs');
     if (!existsSync(manifest)) continue;
     let mod;
@@ -85,6 +135,11 @@ async function scanPackDir(dir, { local }, errors) {
       });
       continue;
     }
+    // A malformed `questions` manifest field is a load fault like any other —
+    // reported here so the runner surfaces it pack-agnostically, no interview
+    // import needed (the pack owns the interview HYGIENE check; the engine owns
+    // the manifest-shape validation).
+    for (const e of packQuestions(mod).errors) errors.push({ ...e, dir: packDir });
     const pack = { ...mod, dir: packDir, local };
     pack.skillChecks = await scanSkillChecks(packDir, errors);
     out.push(pack);
@@ -132,7 +187,15 @@ async function scanSkillChecks(packDir, errors) {
 export async function discoverPacks({ localRoot } = {}) {
   const errors = [];
   const canon = await scanPackDir(packsDir, { local: false }, errors);
-  const local = localRoot ? await scanPackDir(localPacksDir(localRoot), { local: true }, errors) : [];
+  // Scan BOTH local roots (canonical .claudinite/local/packs and the legacy
+  // .claudinite/local_packs) so a repo mid-rename still loads; a pack present in
+  // both would trip the id-collision guard below, which is the desired signal.
+  const local = localRoot
+    ? [
+      ...await scanPackDir(localPacksDir(localRoot), { local: true, subdir: LOCAL_PACKS_SUBDIR }, errors),
+      ...await scanPackDir(legacyLocalPacksDir(localRoot), { local: true, subdir: LEGACY_LOCAL_PACKS_SUBDIR }, errors),
+    ]
+    : [];
   const byId = new Map();
   const packs = [];
   for (const pack of [...canon, ...local]) {
@@ -154,25 +217,31 @@ export async function discoverPacks({ localRoot } = {}) {
 // The pack list alone — the shape every non-runner caller wants. Canon-only when
 // no localRoot is given (the fleet planner and the declaration-writing backfill
 // run in the canon checkout and read member declarations over the API, not from
-// local disk). A broken/duplicate pack is simply absent here; the runner's
+// local disk). A broken/duplicate pack is simply absent here — the runner's
 // discoverPacks surfaces the diagnostic.
 export async function loadPacks(opts) {
   return (await discoverPacks(opts)).packs;
 }
 
-// A local pack's canonical declaration token is namespaced: `local_packs/<id>`
-// — self-documenting in .claudinite-checks.json (a reader sees at a glance the
-// pack lives in the repo's own tree, and a canon id can never be claimed by
-// accident; the discoverPacks shadow guard stays as the backstop). The bare id
-// remains accepted while the fleet migrates (the baselining rewrite + the
-// local-pack-namespace migration track convergence), so packEntryId strips the
-// prefix and every id comparison happens on the bare id.
-export const LOCAL_DECL_PREFIX = 'local_packs/';
-const stripLocalPrefix = (id) =>
-  id.startsWith(LOCAL_DECL_PREFIX) ? id.slice(LOCAL_DECL_PREFIX.length) : id;
+// A local pack's canonical declaration token is namespaced `local/<id>` —
+// self-documenting in .claudinite-checks.json (a reader sees at a glance the
+// pack lives in the repo's own tree under .claudinite/local/, and a canon id can
+// never be claimed by accident; the discoverPacks shadow guard stays as the
+// backstop). Both the pre-rename `local_packs/<id>` form and the bare id remain
+// accepted while the fleet migrates (baselining's normalization + the
+// local-pack-namespace migration track convergence), so packEntryId strips
+// whichever prefix is present and every id comparison happens on the bare id.
+export const LOCAL_DECL_PREFIX = 'local/';
+export const LEGACY_LOCAL_DECL_PREFIX = 'local_packs/';
+const stripLocalPrefix = (id) => {
+  for (const prefix of [LOCAL_DECL_PREFIX, LEGACY_LOCAL_DECL_PREFIX]) {
+    if (id.startsWith(prefix)) return id.slice(prefix.length);
+  }
+  return id;
+};
 
 // The writer-side inverse: the token a declaration writer records for a pack —
-// namespaced for a local pack, the bare id for a canon one.
+// namespaced (canonical form) for a local pack, the bare id for a canon one.
 export const declTokenFor = (pack) =>
   pack.local ? LOCAL_DECL_PREFIX + pack.id : pack.id;
 
