@@ -1,8 +1,8 @@
 # Conversation extract — the growth pack's conversation-side daily task
 
 The conversation-side sibling of [growth-extract](../growth-extract/task.md): mine this repo's captured
-conversation logs for durable lessons, post the dialogue behind each extracted rule on the issue it was worked
-under, and prune logs past retention. You run under the executor, dispatched by a `ready-for-agent` issue. The
+conversation logs for durable lessons, post a short summary of the exchange behind each extracted rule on the
+issue it was worked under, and prune logs past retention. You run under the executor, dispatched by a `ready-for-agent` issue. The
 access model matches growth-extract — the repo's own content is plain **local git** in the checkout; only the
 GitHub **issue/PR API** goes through MCP. (Capture, which needs the live session transcript, is the separate
 in-session step at merge; this task consumes what capture already pushed.)
@@ -19,7 +19,7 @@ wall-time numbers.
   `conversation-logs` branch and its files, staging the `.claudinite/local/packs/` lesson onto a branch, and
   the retention prune are all **plain git in this repo's checkout** (`git fetch`/`show`/`rm`/`push`) — the
   branch is *in this repo*, so no cross-repo access is involved, exactly as growth-extract reads `git log` and
-  stages its lessons. Opening the lesson PR and arming its auto-merge, posting the dialogue, and the
+  stages its lessons. Opening the lesson PR and arming its auto-merge, posting the summary, and the
   tracking-issue log go through the session's GitHub MCP tools (`mcp__github__*`) — none of those is a
   plain-git operation.
 - **The repo's local packs.** Everything under `.claudinite/local/packs/` (the canon home repo's own is
@@ -45,12 +45,13 @@ wall-time numbers.
    auto-merging PR** (title `Claudinite growth: conversation extract`, its commit referencing the worked issue
    so the `task-lifecycle` gate passes), armed for auto-merge the same way
    [growth-extract](../growth-extract/task.md) delivers: GitHub squash-merges it once the repo's checks pass,
-   with no human review. For each rule that actually landed, render its source log's dialogue —
-   `node packs/grow_with_claudinite/render-dialogue.mjs <(git show origin/conversation-logs:<file>)
-   --max-chars 60000` — and post it via `add_issue_comment` on the issue named in the log's filename
-   (`--issue-<n>--`), one comment per chunk, opening with one provenance line (the rule added, the capture
-   date, the session id). A log that yields nothing gets **no** comment — extraction is the only path to
-   permanence. Finding nothing at all is fine and common.
+   with no human review. For each rule that actually landed, post **one short comment** via
+   `add_issue_comment` on the issue named in the log's filename (`--issue-<n>--`): one provenance line (the
+   rule added, the capture date, the session id), then a **200-word-max** description of just the slice of
+   conversation that caused the rule — what was asked, what went wrong or got corrected, and why the rule
+   follows from it. Summarize, never transcribe: the dialogue itself is far too verbose for an issue, so no
+   pasted turns beyond a short quoted phrase, and never the log. A log that yields nothing gets **no**
+   comment — extraction is the only path to permanence. Finding nothing at all is fine and common.
 5. **Retention prune.** When `retention_days` is set: for each log whose filename stamp is older than
    `retention_days` days, give it a **final hindsight pass** — one last read against the now-current corpus
    (steps 3–4 apply to anything it still yields) — then `git rm` it on the `conversation-logs` branch and push
@@ -61,7 +62,7 @@ wall-time numbers.
 
 The standing log is the issue titled exactly **`Claudinite tracker: Conversation Extract`** in this repo —
 found by that exact title, never a number; created **closed** if missing; its state never changed afterward.
-When a run lands a lesson, posts dialogue, or prunes logs, log it as one dated comment (via
+When a run lands a lesson, posts a summary, or prunes logs, log it as one dated comment (via
 `add_issue_comment`) naming what changed; a run that changed nothing logs nothing.
 
 ## Run on a capable model
@@ -74,7 +75,8 @@ judgment this task exists for, and its PR auto-merges without a human review gat
 
 - **Never merge `conversation-logs`** anywhere, and never rewrite its history — plain add and remove commits
   only.
-- **Never post raw JSONL to an issue** — only the rendered dialogue, chunked under the comment size cap.
+- **Never paste the conversation onto an issue** — not raw JSONL, not a rendered transcript, not the turns
+  themselves. Each landed rule gets one ≤200-word summary of the exchange behind it, and nothing more.
 - **Never delete a log younger than retention, and never delete anything while `retention_days` is unset** —
   deletion is the ack that both passes happened.
 - **Never touch the shared canon** — writes go to the repo's own `.claudinite/local/packs/` (via an

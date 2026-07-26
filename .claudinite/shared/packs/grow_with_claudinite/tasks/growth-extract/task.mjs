@@ -8,10 +8,11 @@
 export default {
   id: 'growth-extract',
   frequency: 'daily-1h',           // the 03:00 slot — lessons captured from an already-converged mount (DESIGN §2)
-  signals: ['commits', 'prs', 'issues'],
-  model: 'opus',                   // generalizing/curating lessons is the heaviest judgment, and auto-merge means no human reviews the PR
-  outcome: 'merged-pr',            // additive edits to the repo's own local packs; arms auto-merge after CI
-  worker: 'task.md',
+  precondition_signals: ['commits', 'prs', 'issues'],
+  agent_model: 'opus',                   // generalizing/curating lessons is the heaviest judgment, and auto-merge means no human reviews the PR
+  expected_outcome: 'merged-pr',            // additive edits to the repo's own local packs; arms auto-merge after CI
+  agent_instructions: 'task.md',
+  agent_execution_timeout: 1800,            // curating a lesson over the window — generous bound, extreme protection
 
   // Fire on a SUBSTANTIVE default-branch change (not any change): a bot bump /
   // [skip ci] / nightly-baselining commit advancing main is not a lesson to

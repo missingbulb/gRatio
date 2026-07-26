@@ -30,7 +30,7 @@ halves split by what each needs: **capture** needs the live session transcript, 
 in-session at merge; **extraction** only reads the already-pushed logs, so it is an ordinary
 fleet `run_daily` task with `growth-extract`'s access model — the logs branch is *in the repo*,
 so reading it, committing lessons to local packs, and pruning are plain local git on the working
-tree; only posting the dialogue on the issue uses the GitHub MCP tools.
+tree; only posting the summary on the issue uses the GitHub MCP tools.
 
 1. **Capture — a step in the merge-to-main skill** (in-session, where the transcript lives).
    Right after a merge lands:
@@ -51,8 +51,9 @@ tree; only posting the dialogue on the issue uses the GitHub MCP tools.
    repo's working tree, MCP only for the issue comment). It applies
    [extracting-lessons.md](extracting-lessons.md) (the method — friction signals and the
    measured efficiency analysis, computable from the log's timestamps and token usage), routes
-   keepers into the member's local packs, and posts the rendered dialogue
-   ([render-dialogue.mjs](render-dialogue.mjs)) on the worked issue for each rule that landed —
+   keepers into the member's local packs, and posts on the worked issue, for each rule that landed,
+   a **200-word-max** summary of the slice of conversation that caused it — the dialogue itself is
+   never pasted there, it is far too verbose for an issue —
    **extraction is the only path to permanence**: a log that yields no rule gets no comment,
    and its conversation is gone once retention deletes it (a deliberate owner call).
 3. **Final pass and deletion** — once a log ages past `config.retention_days`, the same task
