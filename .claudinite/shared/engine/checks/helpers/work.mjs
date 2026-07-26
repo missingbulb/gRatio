@@ -69,6 +69,7 @@ class Work {
   get changedFiles() { return this.ctx.changedFiles; }
   get tracked() { return this.ctx.tracked; }
   read(path) { return this.ctx.read(path); }
+  readBase(path) { return this.ctx.readBase(path); }
   exists(path) { return this.ctx.exists(path); }
   packConfig(id) { return this.ctx.config?.packConfig?.[id]; }
 

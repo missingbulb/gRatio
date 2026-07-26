@@ -1,14 +1,14 @@
 // grow_with_claudinite run_daily task: conversation-extract — the conversation-side
 // sibling of growth-extract. Mines the repo's captured conversation logs (the orphan
 // conversation-logs branch, written by merge-to-main's capture step) for durable
-// lessons, posts the dialogue behind each extracted rule on the issue it was worked
-// under, and prunes logs past the entry's retention_days. Worker: the co-located
+// lessons, posts a short summary of the exchange behind each extracted rule on the
+// issue it was worked under, and prunes logs past the entry's retention_days. Worker: the co-located
 // conversation-extract.md.
 //
 // An ordinary independent planner unit with the SAME access model as growth-extract:
 // the conversation-logs branch is IN this repo, so reading it, committing lessons to
 // local packs, and pruning aged logs are all plain local git in the checkout; only
-// posting the dialogue on the worked issue uses the GitHub MCP tools (the issue API
+// posting the summary on the worked issue uses the GitHub MCP tools (the issue API
 // isn't a git operation). (Only CAPTURE needs the live session transcript, so capture
 // stays in-session at merge; extraction consumes what capture already pushed, so it is
 // a regular run_daily task, not a per-repo schedule.)

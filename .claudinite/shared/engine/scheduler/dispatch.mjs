@@ -6,7 +6,7 @@
 // — the "should I file this" decision is always code here, never the shell's
 // judgment (the same split the fleet planner uses).
 //
-// All behavior-defining content (model, outcome, worker) is read from the
+// All behavior-defining content (agent_model, expected_outcome, agent_instructions) is read from the
 // tracked task files, never from the issue — the body only points at the task
 // file and carries the precondition's binding Context (DESIGN §4).
 
@@ -15,7 +15,37 @@
 // converges to (DESIGN §4 lifecycle). Kept here as the shared source for the
 // scheduler side; the executor reuses these plus `agent-running`.
 export const READY_LABEL = 'ready-for-agent';
+// A fleet-scoped task (session_scope: 'fleet') dispatches to a DISTINCT ready
+// label so a separate, broader-scoped executor routine runs it — keeping the
+// fleet-wide session grant off every ordinary project's self executor (the
+// per-project-scheduling fleet/self split). Only tasks that reach other repos use
+// this; today just growth-promote.
+export const READY_FLEET_LABEL = 'ready-for-agent-fleet';
+export const AGENT_RUNNING_LABEL = 'agent-running';
 export const NEEDS_HUMAN_LABEL = 'needs-human';
+export const WORKFLOW_FAILURE_LABEL = 'workflow-failure';
+
+// The ready label a task's dispatch is filed under, from its declared
+// session_scope ('self' default → READY_LABEL; 'fleet' → READY_FLEET_LABEL). The
+// one place this mapping lives, so the scheduler (which files) and any reader stay
+// in sync.
+export const readyLabelForScope = (scope) => (scope === 'fleet' ? READY_FLEET_LABEL : READY_LABEL);
+
+// The full label set the scheduler + executor drive, each with the colour and
+// description a bootstrap one-off would have given it. The scheduler ENSURES every
+// one exists (create-if-missing, idempotent) right before it dispatches — so there
+// is no separate label-creation step to run or forget, and a deleted label
+// self-heals on the next run. This is load-bearing, not cosmetic: GitHub does not
+// create a label when you apply it (the issues API 422s on an unknown label), so
+// the thing that assigns a label must guarantee it first — the
+// gha/label-create-before-add principle, enforced in code here.
+export const SCHEDULER_LABELS = [
+  { name: READY_LABEL, color: '0e8a16', description: 'Claudinite scheduler: dispatch issue ready for the (self-scoped) executor to run' },
+  { name: READY_FLEET_LABEL, color: '1d76db', description: 'Claudinite scheduler: dispatch issue ready for the FLEET-scoped executor (a task that reaches other repos)' },
+  { name: AGENT_RUNNING_LABEL, color: 'fbca04', description: 'Claudinite scheduler: the executor has claimed this issue and is running it' },
+  { name: NEEDS_HUMAN_LABEL, color: 'd93f0b', description: 'Claudinite scheduler: an anomaly that converged here for human triage' },
+  { name: WORKFLOW_FAILURE_LABEL, color: 'b60205', description: 'Claudinite scheduler: a scheduler run or task failed' },
+];
 
 // Title: `[claudinite-task] <pack>/<task> <slot-id>` (DESIGN §4). The prefix is
 // what keeps these issues invisible to the scheduler's own signals (self-trigger
@@ -70,8 +100,9 @@ export function dispatchBody({ taskPath, pack, task, slotId, context = [] }) {
 //     (makes double-runs and crash-retries safe).
 //   - at-most-one-open per task: any OPEN family issue (any slot) suppresses a
 //     new filing → an executor outage accumulates at most one issue per task.
-// Otherwise: create (the shell files it labeled `ready-for-agent`).
-export function planDispatch({ existing = [], pack, task, slotId }) {
+// Otherwise: create (the shell files it labeled with `readyLabel` — the
+// self/fleet ready label the task's scope resolves to, default `ready-for-agent`).
+export function planDispatch({ existing = [], pack, task, slotId, readyLabel = READY_LABEL }) {
   const title = dispatchTitle({ pack, task, slotId });
   const keyPrefix = `${dispatchTaskKey({ pack, task })} `;
   const family = existing.filter((i) => `${(i.title ?? '').trim()} `.startsWith(keyPrefix));
@@ -83,7 +114,7 @@ export function planDispatch({ existing = [], pack, task, slotId }) {
   if (open) {
     return { action: 'suppress', openIssue: open.number, reason: `an open dispatch issue (#${open.number}) already covers ${pack}/${task}` };
   }
-  return { action: 'create', title, label: READY_LABEL, reason: `no dispatch issue yet for ${pack}/${task} slot ${slotId}` };
+  return { action: 'create', title, label: readyLabel, reason: `no dispatch issue yet for ${pack}/${task} slot ${slotId}` };
 }
 
 // The period one slot id represents, from its leading kind char (h/d/w/m). Used
@@ -117,5 +148,89 @@ export function staleEscalationComment(issue) {
   const parsed = parseDispatchTitle(issue.title);
   const which = parsed ? `${parsed.pack}/${parsed.task} (slot ${parsed.slotId})` : 'this task';
   return `This dispatch issue for ${which} has stayed open past ~2 of its scheduling periods without being executed — `
-    + `no executor session drained it. Labeling \`${NEEDS_HUMAN_LABEL}\` for triage.`;
+    + `no executor session ran it. Labeling \`${NEEDS_HUMAN_LABEL}\` for triage.`;
+}
+
+// --- re-arming a lost trigger ------------------------------------------------
+// The label event is the executor's ONLY trigger, and a delivery can be lost: the
+// routine was down or paused, or a session died before it claimed. The issue then
+// sits armed forever, because the label is already applied and GitHub emits
+// `labeled` only on a fresh add. So the scheduler re-arms it — remove the ready
+// label, add it back — which emits a new event.
+//
+// This is the recovery that used to live in the executor's drain sweep, moved into
+// deterministic code. The sweep had EVERY triggered session also process every
+// OTHER armed issue, so one scheduler run filing N dispatches produced N sessions
+// each racing over the same N issues, and the claim swap could not stop it (every
+// session read the work list before any claim landed). That is the
+// duplicate-execution bug: the same dispatch run two or three times over,
+// duplicate tracker issues, duplicate PRs making the same changes. Recovery
+// belongs here, where it is a decision in code that runs once per scheduler run.
+
+const READY_LABELS = new Set([READY_LABEL, READY_FLEET_LABEL]);
+
+// GitHub hands labels back as objects on the issues/search APIs and as bare
+// strings in some fixtures; accept either.
+const labelNames = (issue) =>
+  (issue?.labels ?? []).map((l) => (typeof l === 'string' ? l : l?.name)).filter(Boolean);
+
+// The ready label an issue currently carries, or null. Re-arming reapplies THIS
+// one, so a fleet dispatch is never re-armed as a self dispatch (which would hand
+// it to an executor whose session lacks the cross-repo reach it needs).
+export function readyLabelOn(issue) {
+  return labelNames(issue).find((n) => READY_LABELS.has(n)) ?? null;
+}
+
+// The open dispatch issues whose trigger evidently never landed. Re-arm only an
+// issue that is:
+//   - a dispatch issue (parseable title) still carrying a ready label;
+//   - unclaimed — no `agent-running` (a live session claims before it dispatches)
+//     and not already converged to `needs-human`;
+//   - uncommented — the executor comments on every exit path, so a comment means
+//     some session engaged and this is not a lost event; and
+//   - past `graceMs` (default 20m), comfortably beyond session spin-up, so a
+//     session already on its way is never handed a rival.
+// A stale issue is never re-armed: it is on its way to `needs-human`, and re-arming
+// one would loop forever. That backstop is also what bounds this — an executor that
+// stays down is re-armed each run until ~2 periods, then converges to triage.
+// Dispatch issues left claimed by a session that died mid-run: `agent-running`
+// with no activity for `idleMs` (~3h). Converging these used to be the executor's
+// own step 6, which meant every concurrently-triggered session swept them and
+// commented on the same issue — the duplicate-work bug in miniature. It is code
+// here for the same reason the re-arm is.
+//
+// Scoped to `[claudinite-task]` dispatch issues deliberately (the title parse is
+// what enforces it): a task may put `agent-running` on an issue IT owns — a
+// request its pipeline has claimed, which stays claimed while its PR is in review,
+// far longer than 3h — and only that task knows when its own claim is stale.
+export function staleClaimedDispatchIssues(openIssues = [], now, { idleMs = 3 * 3600e3 } = {}) {
+  const nowMs = new Date(now).getTime();
+  return openIssues.filter((issue) => {
+    if (!parseDispatchTitle(issue.title)) return false;
+    const names = labelNames(issue);
+    if (!names.includes(AGENT_RUNNING_LABEL) || names.includes(NEEDS_HUMAN_LABEL)) return false;
+    return nowMs - new Date(issue.updated_at ?? issue.created_at).getTime() > idleMs;
+  });
+}
+
+// The comment the shell posts when it reclaims a dead session's claim.
+export function staleClaimComment(issue) {
+  const parsed = parseDispatchTitle(issue.title);
+  const which = parsed ? `${parsed.pack}/${parsed.task} (slot ${parsed.slotId})` : 'this task';
+  return `This dispatch issue for ${which} has carried \`${AGENT_RUNNING_LABEL}\` for over 3h with no activity — `
+    + `the executor session that claimed it never converged it. Labeling \`${NEEDS_HUMAN_LABEL}\` for triage.`;
+}
+
+export function rearmDispatchIssues(openIssues = [], now, { graceMs = 20 * 60e3 } = {}) {
+  const nowMs = new Date(now).getTime();
+  const stale = new Set(staleDispatchIssues(openIssues, now).map((i) => i.number));
+  return openIssues.filter((issue) => {
+    if (!parseDispatchTitle(issue.title)) return false;
+    if (stale.has(issue.number)) return false;
+    if (!readyLabelOn(issue)) return false;
+    const names = labelNames(issue);
+    if (names.includes(AGENT_RUNNING_LABEL) || names.includes(NEEDS_HUMAN_LABEL)) return false;
+    if ((issue.comments ?? 0) > 0) return false;
+    return nowMs - new Date(issue.created_at).getTime() > graceMs;
+  });
 }

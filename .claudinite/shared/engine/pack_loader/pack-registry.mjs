@@ -217,7 +217,7 @@ export async function discoverPacks({ localRoot } = {}) {
 // The pack list alone — the shape every non-runner caller wants. Canon-only when
 // no localRoot is given (the fleet planner and the declaration-writing backfill
 // run in the canon checkout and read member declarations over the API, not from
-// local disk). A broken/duplicate pack is simply absent here — the runner's
+// local disk). A broken/duplicate pack is simply absent here; the runner's
 // discoverPacks surfaces the diagnostic.
 export async function loadPacks(opts) {
   return (await discoverPacks(opts)).packs;

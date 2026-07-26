@@ -28,7 +28,7 @@ vendored mount is in place ([vendoring/DESIGN.md](../../../vendoring/DESIGN.md))
   3. **Advance the stamp** — `{ "updated": "<full ISO datetime>", "ref": "<verified canon head sha>" }`
      — **in the same commit as steps 1–2's writes**: the stamp gates which notes apply, so it
      must never advance in a commit that lacks any pending note's ops (#329).
-  If any part fails **before that commit, write nothing**: the member keeps running its old
+  If any part fails **before that commit, write nothing** — the member keeps running its old
   snapshot coherently, tonight's failure goes to the routine's failure log, and the next night
   retries from the same stamp. Also keep the fresh-path wiring converged per [bootstrap.md](../../../bootstrap.md)
   (hook registrations; delete any legacy `@.claudinite/shared/CLAUDE.md` import line — the
@@ -48,8 +48,8 @@ vendored mount is in place ([vendoring/DESIGN.md](../../../vendoring/DESIGN.md))
 Then, for a covered member:
 
 - **Declaration normalization** — a local pack's canonical declaration token is namespaced:
-  `local_packs/<name>` ([engine/pack_loader/pack-registry.mjs](../../../engine/pack_loader/pack-registry.mjs) `declTokenFor`).
-  Rewrite any **bare** local-pack declaration in the member's `.claudinite-checks.json` to that form: a declared id (string
+  `local_packs/<name>` ([engine/pack_loader/pack-registry.mjs](../../../engine/pack_loader/pack-registry.mjs) `declTokenFor`). Rewrite any **bare**
+  local-pack declaration in the member's `.claudinite-checks.json` to that form: a declared id (string
   entry, or an entry object's `id`) without the `local_packs/` prefix whose pack lives in the member's
   own `.claudinite/local_packs/<id>/` gets the prefix; everything else on the entry stays verbatim, and
   a bare id with no such local pack is a canon declaration — leave it alone. Idempotent, and tracked by

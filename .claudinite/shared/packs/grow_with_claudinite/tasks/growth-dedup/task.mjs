@@ -13,10 +13,11 @@
 export default {
   id: 'growth-dedup',
   frequency: 'daily+1h',           // the 05:00 slot — prunes against the merged/mounted canon, after promote (DESIGN §2)
-  signals: ['localPacks', 'sharedMount', 'commits'],
-  model: 'opus',                   // proving the canon genuinely covers a local item — and telling coverage from "stated too generally" — is a judgment call
-  outcome: 'open-pr',              // a wrongful prune deletes a real local lesson, so this keeps a HUMAN approval gate (never auto-merge)
-  worker: 'task.md',
+  precondition_signals: ['localPacks', 'sharedMount', 'commits'],
+  agent_model: 'opus',                   // proving the canon genuinely covers a local item — and telling coverage from "stated too generally" — is a judgment call
+  expected_outcome: 'open-pr',              // a wrongful prune deletes a real local lesson, so this keeps a HUMAN approval gate (never auto-merge)
+  agent_instructions: 'task.md',
+  agent_execution_timeout: 1800,            // proving canon coverage per local item — generous bound, extreme protection
 
   // Gate: the repo must actually track local packs (no local packs → nothing to
   // prune, self-skip). Given local packs, run when the mounted canon this repo

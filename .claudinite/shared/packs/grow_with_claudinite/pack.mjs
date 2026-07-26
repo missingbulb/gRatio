@@ -3,6 +3,7 @@ import growthDedup from './run_daily/growth-dedup-local-instructions.mjs';
 import growthDiscoverPacks from './run_daily/growth-discover-packs.mjs';
 import conversationExtract from './run_daily/conversation-extract.mjs';
 import growthConfig from './config-check.mjs';
+import dedupIntegrity from './dedup-integrity.mjs';
 
 // Opt into the growth lifecycle: a repo declaring grow_with_claudinite contributes its
 // hard-won lessons up to the Claudinite canon and prunes them back out once the canon
@@ -19,8 +20,8 @@ import growthConfig from './config-check.mjs';
 // conversation-extract run_daily task (conversation-extract.md) mines those pushed
 // logs with growth-extract's access model — the logs branch is in the repo, so reading
 // it, committing lessons to local packs, and pruning aged logs are plain local git;
-// only posting the dialogue behind each extracted rule on its issue uses the GitHub
-// MCP tools — pruning logs past config.retention_days.
+// only posting the short summary behind each extracted rule on its issue uses the
+// GitHub MCP tools — pruning logs past config.retention_days.
 //
 // growth-discover-packs is the weekly pack-discovery pipeline: for the member it's
 // handed it manifests the stack, suggests a pack for each unhomed technology, populates
@@ -36,7 +37,7 @@ export default {
   marker: null,
   seededByDefault: true,
   prose: null,
-  rules: [growthConfig],
+  rules: [growthConfig, dedupIntegrity],
   questions: [{
     id: 'retention',
     prompt: 'How many days should a captured conversation log stay on the conversation-logs branch before the conversation-extract retention prune deletes it? The floor is the rethink window — extraction wants ~a week of hindsight; 10 is the recommended value.',

@@ -58,12 +58,12 @@ function vendoredSet(root, files) {
 // `claudinite` is the vendored-mount stamp — { updated: "<ISO datetime>", ref: "<sha>" },
 // written by the nightly update pass, selecting which migration notes still apply
 // (vendoring/DESIGN.md owns the model); the checks engine itself only tolerates it.
-// `schedule` is the per-repo maintenance anchor the vendored hourly scheduler
+// `taskScheduler` is the per-repo maintenance anchor the vendored hourly scheduler
 // reads (per-project-scheduling DESIGN §2) — { dailyHour, weeklyDay, monthlyDay },
 // all UTC. Absence means the documented defaults, so an omitted key is not an
 // error; a present one is range-validated at load below. Its declaration is also
 // the per-repo cutover marker during the scheduling rollout (MIGRATION Phase 0.6).
-export const CONFIG_KEYS = ['packs', 'rules', 'accept', 'sharedConstants', 'packConfig', 'maintenance', 'claudinite', 'schedule'];
+export const CONFIG_KEYS = ['packs', 'rules', 'accept', 'sharedConstants', 'packConfig', 'maintenance', 'claudinite', 'taskScheduler'];
 
 // The keys a `schedule` object may carry, and the canonical weekday vocabulary
 // (mirrored from engine/scheduler/slots.mjs WEEKDAYS — kept as a literal here so
@@ -99,7 +99,7 @@ export const PACK_ENTRY_KEYS = ['id', 'config', 'answers', 'rules', 'accept', 'v
 // read this one shape regardless of which form the file used.
 export function loadConfig(root) {
   const path = join(root, '.claudinite-checks.json');
-  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, schedule: null, errors: [] };
+  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, taskScheduler: null, errors: [] };
   if (!existsSync(path)) return empty;
 
   let raw;
@@ -210,31 +210,31 @@ export function loadConfig(root) {
     if (entry.config !== undefined) packConfig[entry.id] = entry.config;
   }
 
-  // --- schedule: the per-repo maintenance anchor (UTC). Range-validated at
+  // --- taskScheduler: the per-repo maintenance anchor (UTC). Range-validated at
   // load so a bad anchor is a settings error like any other; absence is legal
   // (the scheduler fills the documented defaults). The value passes through
   // unchanged for the scheduler to normalize.
-  let schedule = null;
-  if (raw.schedule !== undefined) {
-    if (raw.schedule === null || typeof raw.schedule !== 'object' || Array.isArray(raw.schedule)) {
-      errors.push({ what: '"schedule" must be an object', fix: 'e.g. { "dailyHour": 4, "weeklyDay": "Sun", "monthlyDay": 1 }' });
+  let taskScheduler = null;
+  if (raw.taskScheduler !== undefined) {
+    if (raw.taskScheduler === null || typeof raw.taskScheduler !== 'object' || Array.isArray(raw.taskScheduler)) {
+      errors.push({ what: '"taskScheduler" must be an object', fix: 'e.g. { "dailyHour": 4, "weeklyDay": "Sun", "monthlyDay": 1 }' });
     } else {
-      for (const key of Object.keys(raw.schedule)) {
+      for (const key of Object.keys(raw.taskScheduler)) {
         if (!SCHEDULE_KEYS.includes(key)) {
-          errors.push({ what: `unknown "schedule" setting "${key}"`, fix: `remove it or fix the name — valid schedule settings: ${SCHEDULE_KEYS.join(', ')}` });
+          errors.push({ what: `unknown "taskScheduler" setting "${key}"`, fix: `remove it or fix the name — valid taskScheduler settings: ${SCHEDULE_KEYS.join(', ')}` });
         }
       }
-      const { dailyHour, weeklyDay, monthlyDay } = raw.schedule;
+      const { dailyHour, weeklyDay, monthlyDay } = raw.taskScheduler;
       if (dailyHour !== undefined && !(Number.isInteger(dailyHour) && dailyHour >= 0 && dailyHour <= 23)) {
-        errors.push({ what: `"schedule.dailyHour" must be an integer 0–23 (UTC), got ${JSON.stringify(dailyHour)}`, fix: 'set an hour of the day, 0 through 23' });
+        errors.push({ what: `"taskScheduler.dailyHour" must be an integer 0–23 (UTC), got ${JSON.stringify(dailyHour)}`, fix: 'set an hour of the day, 0 through 23' });
       }
       if (weeklyDay !== undefined && !SCHEDULE_WEEKDAYS.includes(weeklyDay)) {
-        errors.push({ what: `"schedule.weeklyDay" must be one of ${SCHEDULE_WEEKDAYS.join(', ')}, got ${JSON.stringify(weeklyDay)}`, fix: 'name a weekday, e.g. "Sun"' });
+        errors.push({ what: `"taskScheduler.weeklyDay" must be one of ${SCHEDULE_WEEKDAYS.join(', ')}, got ${JSON.stringify(weeklyDay)}`, fix: 'name a weekday, e.g. "Sun"' });
       }
       if (monthlyDay !== undefined && !(Number.isInteger(monthlyDay) && monthlyDay >= 1 && monthlyDay <= 31)) {
-        errors.push({ what: `"schedule.monthlyDay" must be an integer 1–31, got ${JSON.stringify(monthlyDay)}`, fix: 'set a day of the month, 1 through 31 (clamped to the month length)' });
+        errors.push({ what: `"taskScheduler.monthlyDay" must be an integer 1–31, got ${JSON.stringify(monthlyDay)}`, fix: 'set a day of the month, 1 through 31 (clamped to the month length)' });
       }
-      schedule = raw.schedule;
+      taskScheduler = raw.taskScheduler;
     }
   }
 
@@ -245,7 +245,7 @@ export function loadConfig(root) {
     accept,
     sharedConstants: Array.isArray(raw.sharedConstants) ? raw.sharedConstants : [],
     packConfig,
-    schedule,
+    taskScheduler,
     errors,
   };
 }

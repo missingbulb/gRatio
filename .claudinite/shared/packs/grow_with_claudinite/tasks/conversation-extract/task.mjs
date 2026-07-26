@@ -1,7 +1,7 @@
 // grow_with_claudinite task: conversation-extract — the conversation-side sibling
 // of growth-extract (per-project-scheduling DESIGN §6). Mines the repo's captured
 // conversation logs (the orphan `conversation-logs` branch) for durable lessons,
-// posts the dialogue behind each extracted rule on the issue it was worked under,
+// posts a short summary of the exchange behind each extracted rule on its issue,
 // and prunes logs past the entry's retention. Worker: task.md.
 //
 // Self-contained (imports nothing): the whole contract is this default export.
@@ -9,10 +9,11 @@
 export default {
   id: 'conversation-extract',
   frequency: 'daily-1h',           // the 03:00 slot, alongside growth-extract (DESIGN §2)
-  signals: ['commits', 'conversationLogs'],
-  model: 'opus',                   // deciding what clears the lesson bar is the heaviest judgment, and its PR auto-merges without a human gate
-  outcome: 'merged-pr',            // lessons ride an auto-merging PR; the retention prune is a push to the non-default logs branch (outside the taxonomy)
-  worker: 'task.md',
+  precondition_signals: ['commits', 'conversationLogs'],
+  agent_model: 'opus',                   // deciding what clears the lesson bar is the heaviest judgment, and its PR auto-merges without a human gate
+  expected_outcome: 'merged-pr',            // lessons ride an auto-merging PR; the retention prune is a push to the non-default logs branch (outside the taxonomy)
+  agent_instructions: 'task.md',
+  agent_execution_timeout: 1800,            // mining logs + a retention prune — generous bound, extreme protection
 
   // Two independent reasons to run, so the age-based prune fires on quiet repos
   // too (the old weekly-full crutch retires — a log ages out on wall time, not on

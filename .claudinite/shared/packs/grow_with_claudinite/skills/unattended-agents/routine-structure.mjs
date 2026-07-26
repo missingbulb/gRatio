@@ -1,17 +1,21 @@
 import { dirname, join, basename } from 'node:path';
 import { finding } from '../../../../engine/checks/helpers/findings.mjs';
 
-// A routine is a folder whose entry point is `routine.md` (the standard name),
-// alongside the deterministic scripts it invokes. This check asserts the
-// prose↔script wiring that the unattended-agents skill mandates.
+// A routine (or a per-project-scheduling task, §1) is a folder whose entry point is
+// `routine.md` OR `task.md`, alongside the deterministic scripts it invokes. This
+// check asserts the prose↔script wiring that the unattended-agents skill mandates,
+// for both shapes: a legacy `dev/routines/<name>/routine.md` and a converted
+// `.../tasks/<name>/task.md` earn the same guard (a task folder's `task.mjs`
+// carries the declaration; its `task.md` is the worker prose the scripts hang off).
 //
 // RELEVANCE FIRST (see engine/checks/README.md "Adding a rule"): a skill check has no
 // declaration gate — the engine runs it on EVERY repo, including ones with no
 // routines — so `run` must detect relevance before asserting anything. Here the
-// signal is a `routine.md` existing: `routineDirs` is empty on any repo without
-// one, every loop below is over an empty set, and the check no-ops. Keep that
-// gate narrow and up front; a broad signal would fire false findings everywhere.
-const ENTRY = 'routine.md';
+// signal is a `routine.md`/`task.md` existing: `routineDirs` is empty on any repo
+// without one, every loop below is over an empty set, and the check no-ops. Keep
+// that gate narrow and up front; a broad signal would fire false findings everywhere.
+const ENTRY_NAMES = ['routine.md', 'task.md'];
+const isEntry = (f) => ENTRY_NAMES.includes(basename(f));
 const PHASE_SCRIPTS = ['preconditions.sh', 'postconditions.sh'];
 
 // Direct-child files of dir `d` within `files` matching `pred` (not descendants).
@@ -27,7 +31,7 @@ function children(files, d, pred) {
 const rule = {
   id: 'routine-structure',
   severity: 'blocking',
-  description: 'A routine folder has a routine.md entry point wired to the scripts it invokes',
+  description: 'A routine/task folder has a routine.md or task.md entry point wired to the scripts it invokes',
   doc: 'skills/unattended-agents/SKILL.md',
   why: 'a routine is prose (read) + scripts (executed); a dangling invocation or an orphan/entry-less script means the agent runs the wrong thing or the job hides where it is never read',
 
@@ -35,11 +39,16 @@ const rule = {
     const out = [];
     const files = ctx.files;
 
-    const routineDirs = new Set(
-      files.filter((f) => basename(f) === ENTRY).map((f) => dirname(f)),
-    );
+    // dir -> its entry file name (routine.md or task.md). A folder carries one or
+    // the other; if it somehow had both, the first wins (they wire the same scripts).
+    const entryOf = new Map();
+    for (const f of files.filter(isEntry)) {
+      const d = dirname(f);
+      if (!entryOf.has(d)) entryOf.set(d, basename(f));
+    }
+    const routineDirs = new Set(entryOf.keys());
 
-    for (const dir of routineDirs) {
+    for (const [dir, ENTRY] of entryOf) {
       const text = ctx.read(join(dir, ENTRY));
       if (text === null) continue;
       const lines = text.split('\n');
@@ -81,8 +90,8 @@ const rule = {
       }
     }
 
-    // 4. A folder carrying phase scripts but no routine.md has lost its entry
-    //    point — the standard name is how the routine is found and run.
+    // 4. A folder carrying phase scripts but no routine.md/task.md has lost its
+    //    entry point — the standard name is how the routine or task is found and run.
     const phaseDirs = new Set(
       files.filter((f) => PHASE_SCRIPTS.includes(basename(f))).map((f) => dirname(f)),
     );
@@ -91,8 +100,8 @@ const rule = {
       out.push(finding(rule, {
         file: join(dir, PHASE_SCRIPTS.find((n) => ctx.exists(join(dir, n))) || PHASE_SCRIPTS[0]),
         line: null,
-        what: `sits in a routine folder with no ${ENTRY} entry point`,
-        fix: `add ${ENTRY} as the folder's entry point (it invokes these scripts), or move the scripts out`,
+        what: `sits in a routine folder with no ${ENTRY_NAMES.join(' / ')} entry point`,
+        fix: `add ${ENTRY_NAMES.join(' or ')} as the folder's entry point (it invokes these scripts), or move the scripts out`,
       }));
     }
 

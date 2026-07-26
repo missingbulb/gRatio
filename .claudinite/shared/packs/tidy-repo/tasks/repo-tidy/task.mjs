@@ -31,10 +31,11 @@ const PRESUMED_DEFAULT = new Set(['main', 'master']);
 export default {
   id: 'repo-tidy',
   frequency: 'daily',              // the 04:00 slot (DESIGN §2)
-  signals: ['prs', 'issues', 'branches', 'commits'],
-  model: 'sonnet',                 // the landed-status and implemented-in-main calls are judgment; the reconcile is mechanical
-  outcome: 'none',                 // assesses branches/PRs read-only and acts only on ISSUES — it never opens or merges a PR
-  worker: 'task.md',
+  precondition_signals: ['prs', 'issues', 'branches', 'commits'],
+  agent_model: 'sonnet',                 // the landed-status and implemented-in-main calls are judgment; the reconcile is mechanical
+  expected_outcome: 'none',                 // assesses branches/PRs read-only and acts only on ISSUES — it never opens or merges a PR
+  agent_instructions: 'task.md',
+  agent_execution_timeout: 900,             // read-only assessment + issue triage — predictable, a tighter bound
 
   // Run when the window surfaced genuine tidy work — a PR or issue actually
   // updated in the window — or on a SUBSTANTIVE default-branch move, which widens
