@@ -9,7 +9,8 @@
     },
     "research-project",
     "tidy-repo",
-    "grow_with_claudinite"
+    "grow_with_claudinite",
+    "local/gratio"
   ],
   "maintenance": {
     "delivery": "auto-merge"
