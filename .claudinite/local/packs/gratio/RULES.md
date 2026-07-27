@@ -29,9 +29,11 @@ for boundary accuracy is a regression however good the IoU delta looks.
 The three `data/samples/` images have hand-drawn masks and score *segmentation*
 (`evaluate_segmentation.py`, `report.py`). External sets such as
 `data/external/macaque_cc/` have a **published g and no masks**, and score only
-the *number* (`validate_external.py`). Never wire a mask-free set into the IoU
-harness — the masks it would need do not exist, and inventing them turns the
-baseline into an echo of the pipeline (`docs/reference/external_datasets.md`).
+the *number* (`validate_external.py`) — inventing masks to force one into the
+IoU harness would turn the baseline into an echo of the pipeline
+(`docs/reference/external_datasets.md`). Enforced by
+`gratio-no-external-in-iou-harness`: the harness may never reference an
+external-set path.
 
 ## Borders look hand-traced
 

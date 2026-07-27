@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import noSampleSpecialCasing from './no-sample-special-casing.mjs';
 import generatedGtMasks from './generated-gt-masks.mjs';
 import optionalSkimageImport from './optional-skimage-import.mjs';
+import noExternalInIouHarness from './no-external-in-iou-harness.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
@@ -84,8 +85,32 @@ test('generated-gt-masks is quiet when the annotated crop changed too', () => {
   }), []);
 });
 
+test('no-external-in-iou-harness fires when the harness references the external set', () => {
+  const found = noExternalInIouHarness.run(ctxOf({
+    'evaluate_segmentation.py': 'import glob\next_files = glob.glob("data/external/macaque_cc/*.png")\n',
+    'report.py': '',
+  }));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 2);
+});
+
+test('no-external-in-iou-harness tolerates a comment or docstring naming the exclusion', () => {
+  assert.deepEqual(noExternalInIouHarness.run(ctxOf({
+    'evaluate_segmentation.py': '"""Segmentation IoU harness. data/external/ sets are intentionally out of scope."""\n'
+      + 'SAMPLES_DIR = "data/samples"  # not data/external -- see CLAUDE.md\n',
+    'report.py': '',
+  })), []);
+});
+
+test('no-external-in-iou-harness ignores files outside the harness', () => {
+  assert.deepEqual(noExternalInIouHarness.run(ctxOf({
+    'validate_external.py': 'DATA_DIR = "data/external/macaque_cc"\n',
+  })), []);
+});
+
 test('the repo as it stands is clean under every rule', () => {
   const ctx = realCtx();
   assert.deepEqual(noSampleSpecialCasing.run(ctx), []);
   assert.deepEqual(optionalSkimageImport.run(ctx), []);
+  assert.deepEqual(noExternalInIouHarness.run(ctx), []);
 });
