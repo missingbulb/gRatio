@@ -12,7 +12,7 @@
 // no live GitHub — exactly like signals/index.mjs. The one place the real
 // FLEET_GITHUB_TOKEN is read is `makeFleetGh`, at the I/O edge.
 //
-// This deliberately ports routines/fleet/signals.mjs's per-member probes (the
+// This deliberately ports the retired central planner's per-member probes (the
 // `fleetMembers` bundle the old central planner stamped on the home repo) into
 // the per-repo scheduler, adapted for the `local/packs` rename (both roots
 // accepted through the migration) and carrying each member's provenance stamp so
@@ -20,11 +20,10 @@
 
 import { makeGh } from './gh.mjs';
 import { packEntryId } from '../../pack_loader/pack-registry.mjs';
-
 // Local-pack roots, canonical first — a window commit touching either is a local
 // -pack change (promote's trigger). Both are live until the Phase 4 cleanup drops
-// the legacy dual root.
-const LOCAL_ROOTS = ['.claudinite/local/packs/', '.claudinite/local_packs/'];
+// the legacy dual root. One definition, shared with the per-repo probes.
+import { LOCAL_PACK_ROOTS as LOCAL_ROOTS } from './local.mjs';
 
 async function paged(gh, path) {
   const out = [];

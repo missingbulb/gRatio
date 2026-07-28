@@ -42,6 +42,21 @@ Don't treat a long reference as something to suppress — treat it as a signal t
 - **Introduce a boundary** (a small public entry point / index for a subtree) so outsiders reference *one* near file instead of reaching deep into the subtree's internals. This converts many deep references into one shallow one.
 - **Accept it, deliberately,** for genuine cross-cutting concerns (a top-level shared/util/config that everything legitimately depends on). These exist; the point is they should be *few and named*, not the accidental norm.
 
+## A file used by exactly one unit belongs inside that unit
+
+The distance metric asks *how far* a reference reaches. This asks *how many* things reach at all, and it is the sharper question when the answer is **one**.
+
+**A file — code or prose — whose only consumer is a single self-contained unit lives inside that unit's folder.** A "unit" here is any directory the project treats as one thing: a scheduled task, a command, a plugin, a feature module. If exactly one of them imports the file, reads it, or links to it, then the file is part of it, and the folder should say so.
+
+This is not the distance rule restated. A helper one level up from its only caller scores a perfectly healthy distance 1 and is still misplaced: sitting outside the unit it advertises itself as shared, so the next author treats it as a public surface, and it accumulates callers it was never designed for. Deleting the unit also leaves the helper behind as orphaned code nobody dares remove, because its location implies someone else might need it. Moving it inside makes the unit **self-contained**: everything it owns travels, and is deleted, with it.
+
+Apply it in both directions:
+
+- **Two or more units use it** → it is genuinely shared. Lift it to their nearest common ancestor and leave it there; that is the shared-dependency move above, and the location is now telling the truth.
+- **Exactly one uses it** → move it in, even when the reference was already short.
+
+The usual exemptions still hold — a mandated location wins, and a project's test-location convention wins. Split a file whose *parts* have different audiences rather than leaving the whole thing outside for the sake of one shared export: move the single-consumer body inside the unit, lift the shared function to the common ancestor.
+
 ## Special case: files whose location is mandated
 
 Some files **cannot** live next to what they relate to, because a tool or platform dictates exactly where they go. A GitHub workflow must sit under `.github/workflows/`; agent/config files live under `.claude/` (or `.cloud/`, `.vscode/`, `.devcontainer/`, etc.); many ecosystems require a manifest at the repo root (`package.json`, `pyproject.toml`, `Dockerfile`). Their placement is fixed by an external contract, not chosen by you.

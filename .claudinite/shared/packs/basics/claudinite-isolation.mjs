@@ -26,7 +26,14 @@ import { SHARED_SUBDIR } from '../../engine/pack_loader/pack-registry.mjs';
 // imports/wiring are the coupling class that matters.
 export default {
   id: 'claudinite-isolation',
-  description: 'Outside the wiring files (CLAUDE.md, .claude/, .gitignore, .gitattributes, .github/workflows/, the settings file), nothing may reference .claudinite/ — inline what you need instead of importing the canon',
+  // CLAUDE.md was a wiring exception until #384: a consumer's CLAUDE.md carried an
+  // `@.claudinite/shared/CLAUDE.md` import, a real reference into the mount that the
+  // carve-out existed to permit. #384 retired that import and had converge-wiring
+  // strip it (`removeRetiredCorpusImport`), removing the only reason a consumer's
+  // CLAUDE.md needs to name the mount — so the carve-out went with it, deliberately.
+  // This description said otherwise for far longer than it should have, and the gap
+  // fired on canon-shaped orientation prose across the fleet.
+  description: 'Outside the wiring files (.claude/, .gitignore, .gitattributes, .github/workflows/, the settings file), nothing may reference .claudinite/ — CLAUDE.md included — inline what you need instead of importing the canon',
   why: 'the vendored canon is refreshed nightly and refactored upstream; code that reaches into it inherits every canon rename as a breaking change',
   doc: 'vendoring/DESIGN.md',
   crossingExcuse: 'if the crossing is deliberate, excuse it with accept: [{ "rule": "claudinite-isolation", "path": "<file>", "reason": "..." }] in .claudinite-checks.json (a pack-shipped barrier takes no per-rule except entries)',

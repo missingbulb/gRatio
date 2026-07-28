@@ -4,8 +4,8 @@ import { join, resolve, sep } from 'node:path';
 import { parseEntries } from './session-transcript.mjs';
 import { SHARED_SUBDIR, packEntryId } from '../../pack_loader/pack-registry.mjs';
 
-function sh(root, cmd, args, { allowFail = false, input = undefined } = {}) {
-  const r = spawnSync(cmd, args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, input });
+function sh(root, cmd, args, { allowFail = false, input = undefined, timeout = undefined } = {}) {
+  const r = spawnSync(cmd, args, { cwd: root, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, input, timeout });
   if (r.status !== 0 && !allowFail) {
     throw new Error(`${cmd} ${args.join(' ')} failed (${r.status}): ${r.stderr}`);
   }
@@ -20,6 +20,31 @@ function resolveBaseRef(root) {
     if (gitTry(root, 'rev-parse', '--verify', '--quiet', `${ref}^{commit}`) !== null) return ref;
   }
   return null;
+}
+
+const FETCH_TIMEOUT_MS = 8000;
+
+// A remote-tracking base ref is only as fresh as the last fetch, and a cloud session's
+// clone freezes it at container-creation time — so every commit the base branch gained
+// since lands inside `mergeBase..HEAD` and gets billed to the work. That is a wrong
+// verdict, not a stale one: the delta rules (squash-merge-history above all, a *blocking*
+// rule) report other people's commits as introduced by this change, and `--changed`
+// widens to files the change never touched. Refreshing the ref once per run is what makes
+// "the work" mean the work.
+//
+// Best-effort by construction — no network, no remote, a lock held, a slow server: the
+// fetch fails or times out and the run continues against the ref as it stands, exactly as
+// before this existed. It writes ONLY the remote-tracking ref (explicit refspec, no tags):
+// no local branch, no index, no working tree, nothing the session could be surprised by.
+// Set CLAUDINITE_CHECKS_NO_FETCH=1 to skip it (sealed sandboxes, or to pin a base).
+function refreshBaseRef(root, ref) {
+  if (!ref || process.env.CLAUDINITE_CHECKS_NO_FETCH === '1') return;
+  const m = /^([^/]+)\/(.+)$/.exec(ref);
+  if (!m) return; // a local branch is already as current as the checkout — nothing to fetch
+  const [, remote, branch] = m;
+  sh(root, 'git', ['fetch', '--quiet', '--no-tags', remote,
+    `+refs/heads/${branch}:refs/remotes/${remote}/${branch}`],
+  { allowFail: true, timeout: FETCH_TIMEOUT_MS });
 }
 
 function lines(out) {
@@ -99,7 +124,7 @@ export const PACK_ENTRY_KEYS = ['id', 'config', 'answers', 'rules', 'accept', 'v
 // read this one shape regardless of which form the file used.
 export function loadConfig(root) {
   const path = join(root, '.claudinite-checks.json');
-  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, taskScheduler: null, errors: [] };
+  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, taskScheduler: null, claudinite: null, maintenance: null, errors: [] };
   if (!existsSync(path)) return empty;
 
   let raw;
@@ -246,6 +271,18 @@ export function loadConfig(root) {
     sharedConstants: Array.isArray(raw.sharedConstants) ? raw.sharedConstants : [],
     packConfig,
     taskScheduler,
+    // Passed through as declared, not normalized: `claudinite` is the
+    // vendored-mount provenance stamp the `stamp` signal reads, and `maintenance`
+    // is the delivery preference. Both are in CONFIG_KEYS, so declaring them is
+    // legal and raises no error — and omitting them from THIS shape is what made
+    // the stamp invisible to the scheduler and silently killed baselining across
+    // the whole fleet: every repo self-skipped as "no vendored mount (no stamp)"
+    // while its scheduler runs went green. A key that validates but does not
+    // survive the load is the worst kind — legal to write, impossible to read,
+    // silent in both directions. The CONFIG_KEYS-survive-loadConfig test pins the
+    // whole set so no future key can go the same way.
+    claudinite: raw.claudinite ?? null,
+    maintenance: raw.maintenance ?? null,
     errors,
   };
 }
@@ -253,9 +290,15 @@ export function loadConfig(root) {
 export function buildContext({ root, mode = 'changed', baseOverride = null, transcriptPath = null }) {
   root = resolve(root);
   const baseRef = baseOverride || resolveBaseRef(root);
+  refreshBaseRef(root, baseRef);
   const mergeBase = baseRef ? (gitTry(root, 'merge-base', 'HEAD', baseRef) || '').trim() || null : null;
   // Diffing against HEAD keeps uncommitted work in scope even when no base branch resolves.
   const diffBase = mergeBase || 'HEAD';
+  // Is this commit already on the base branch? `--is-ancestor` exits non-zero for "no",
+  // which gitTry surfaces as null. No base ref to compare against ⇒ nothing is known to
+  // be on it, so nothing is filtered out.
+  const onBaseBranch = (sha) =>
+    !!baseRef && gitTry(root, 'merge-base', '--is-ancestor', sha, baseRef) !== null;
 
   const tracked = lines(gitTry(root, 'ls-files'));
   const untracked = lines(gitTry(root, 'ls-files', '--others', '--exclude-standard'));
@@ -394,13 +437,20 @@ export function buildContext({ root, mode = 'changed', baseOverride = null, tran
     // chain since the merge-base with the base branch (the squash-only effect
     // check, scoped to the work). Empty when no base resolves or the branch is
     // even with it; pre-existing merges already on the base are out of range.
+    //
+    // The range alone trusts the merge-base to be right, and it isn't always: a
+    // shallow clone's grafted boundary or a criss-cross history can hand back a
+    // merge-base that sweeps the base branch's own merges into the range. So each
+    // candidate is confirmed against the base ref itself — a merge already on the
+    // base branch was never introduced here, whatever the range says. Offline and
+    // exact, and it holds when refreshBaseRef couldn't run.
     introducedMergeCommits() {
       if (!mergeBase) return [];
       const out = gitTry(root, 'log', '--merges', '--first-parent', '--format=%h %s', `${mergeBase}..HEAD`);
       return lines(out).map((l) => {
         const i = l.indexOf(' ');
         return { sha: l.slice(0, i), subject: l.slice(i + 1) };
-      });
+      }).filter(({ sha }) => !onBaseBranch(sha));
     },
 
     // Fixed-string search across tracked files; git grep exits 1 on no match.

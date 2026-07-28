@@ -91,15 +91,14 @@ export default {
   // action dir drops out with its last file).
   //
   // report-failure is deliberately EXCLUDED from this deletion set: it is shared
-  // canon infrastructure, NOT chrome-release-exclusive. Another (non-chrome) pack's
-  // vendored coverage-workflow stub (stubs/fleet-coverage.yml) references
-  // `…/.github/actions/report-failure@main`, and it is the general
-  // unattended-workflow failure reporter documented across the fleet's consumer
-  // repos. This migration's legacyPresent probe only inspects the
+  // canon infrastructure, NOT chrome-release-exclusive. Non-chrome workflows call
+  // `…/.github/actions/report-failure@main` directly (the canon's own
+  // deploy-privacy-page.yml, and consumer repos across the fleet), and it is the
+  // general unattended-workflow failure reporter documented for them. This
+  // migration's legacyPresent probe only inspects the
   // chrome-extension-release *stub*, so its "0 repos on the legacy shape" signal says
   // nothing about those non-chrome @main callers — deleting report-failure on that
-  // signal would break that other pack's coverage workflow on its next
-  // materialization. The four release *workflows* being deleted here
+  // signal would break them. The four release *workflows* being deleted here
   // reference report-failure @main internally, but those references vanish with the
   // files; the canon action itself must survive for the non-chrome callers. Chrome
   // consumers keep working via the copy `materialize` vendors into each of them.

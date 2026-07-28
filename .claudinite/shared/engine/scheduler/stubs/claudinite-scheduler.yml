@@ -11,12 +11,26 @@
 # (scheduler-workflow-shape enforces the range; baselining re-derives the value to
 # catch drift). `workflow_dispatch` allows a manual run; the concurrency group
 # serializes runs so a slow run and its successor never overlap.
+#
+# A manual run may carry `overrides` — ONE free-form `KEY=value` string, because
+# GitHub cannot declare arbitrary named inputs. It reaches the engine as
+# `CLAUDINITE_OVERRIDES`, and the engine understands exactly one key:
+# `FORCE_TASKS=<comma-separated task ids>`.
+# It runs those tasks even though their slot has already passed, and
+# WITHOUT consulting their preconditions — forcing is the operator's decision, so
+# nothing asks the task whether it agrees. The engine learns "run these ids",
+# never what any of them do, and no task declaration mentions forcing at all.
 name: Claudinite scheduler
 
 on:
   schedule:
     - cron: '10 * * * *'
   workflow_dispatch:
+    inputs:
+      overrides:
+        description: 'Manual-run overrides: comma-separated KEY=value. FORCE_TASKS=<task ids> runs those tasks unconditionally, even when their slot has passed, e.g. FORCE_TASKS=baselining.'
+        required: false
+        default: ''
 
 concurrency:
   group: claudinite-scheduler
@@ -26,7 +40,10 @@ permissions:
   contents: write        # read the repo + vendored engine; baselining's deliver() pushes the maintenance branch (agent-preprocessing §7/E4)
   issues: write          # file / label / close dispatch issues
   pull-requests: write   # baselining's deliver() opens the per-cycle maintenance PR and arms auto-merge
-  actions: read          # read the run ledger (last successful run) for due-slot math
+  actions: write         # read the run ledger (last successful run) for due-slot math, AND
+                         # dispatch a workflow a task drives (store-release fires the release
+                         # orchestrator's daily leg) — creating a workflow_dispatch event needs
+                         # write, not read, and `read` silently 403s the POST
 
 jobs:
   schedule:
@@ -39,6 +56,9 @@ jobs:
       - name: Evaluate schedule and dispatch due tasks
         env:
           GITHUB_TOKEN: ${{ github.token }}
+          # Empty on every scheduled run — `inputs` is only populated by
+          # workflow_dispatch. The engine reads only FORCE_TASKS out of it.
+          CLAUDINITE_OVERRIDES: ${{ inputs.overrides }}
         run: node .claudinite/shared/engine/scheduler/run.mjs
 
   # A scheduled run reaches no one when it goes red, so escalate a whole-run

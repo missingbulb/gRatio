@@ -248,7 +248,7 @@ export const declTokenFor = (pack) =>
 // A `packs` declaration entry is either a plain id string or an entry object
 // `{ id, config?, rules?, accept?, via? }` carrying that pack's own settings
 // (see engine/checks/README.md). This is the one id-extractor every reader shares, so
-// raw-JSON consumers (the SessionStart hooks, the fleet routines) and the
+// raw-JSON consumers (the SessionStart hooks, the fleet signal probe) and the
 // engine agree on both shapes — and on both declaration forms: it returns the
 // BARE pack id, stripping a `local_packs/` namespace where one is declared.
 // Returns undefined for a malformed entry.

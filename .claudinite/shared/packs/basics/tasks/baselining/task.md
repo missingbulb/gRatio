@@ -44,10 +44,27 @@ run this repo's checks (`node .claudinite/shared/engine/checks/check_the_world.m
 and resolve the blocking findings that need judgment: apply a failing check's own
 `fix` remedy, **never more**. A finding that needs a real decision (not a mechanical
 remedy) becomes an **issue in this repo**, not an edit — the same "surface it, don't
-guess" stance the align step always had. The mount, the wiring (scheduler workflow
-`.github/workflows/claudinite-scheduler.yml` + its hashed cron, the settings hooks),
-interview status, and declaration normalization are already handled deterministically
-by preprocessing (converge-wiring); you only touch what a check still flags.
+guess" stance the align step always had. The mount and the wiring are already handled
+deterministically by preprocessing; you only touch what a check still flags.
+`convergeWiring`'s set is exactly three surfaces — the scheduler workflow
+`.github/workflows/claudinite-scheduler.yml` (with its hashed cron and the tasks'
+declared secrets), the settings hooks, and removal of the retired `CLAUDE.md` corpus
+import. Pack-adoption **interview status** is not preprocessing's: unanswered questions
+surface as a mild SessionStart note (never a finding), and a stale stored answer as
+adopt-claudinite's advisory hygiene check — so interview drift reaches you here, as a
+check finding like any other.
+
+**Local-pack declaration normalization is currently unimplemented — do not assume it
+ran.** Nothing rewrites a bare or legacy declaration in `.claudinite-checks.json` to the
+canonical `local/<id>` token: `convergeWiring` never reads `packs` at all, and
+`declTokenFor` (`engine/pack_loader/pack-registry.mjs`) has no caller outside its own
+test. The `local-pack-namespace` migration record holds no ops of its own — it was
+written as convergence telemetry for a rewrite step that lived in the retired worker
+prose and went away with it. Consequence: on a repo that still declares a bare local-pack
+id, that record's `legacyPresent` probe can never reach zero and its `retire: 'auto'`
+never fires. Where the rewrite should live (preprocessing, a real migration op, or
+nowhere — the engine accepts every form) is an open decision; do not improvise it during
+a nightly run.
 
 **One thing preprocessing cannot repair — the executor routine.** The label-wired
 CCR routine that fires on `ready-for-agent` (model `sonnet`, launcher prompt

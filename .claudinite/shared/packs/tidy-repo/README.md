@@ -9,17 +9,25 @@ repo in the sweep; removing it is a durable opt-out (baselining never re-adds it
 work is a maintenance task, not checks. Its policy (`RULES.md`): assess PRs and branches read-only, act
 only on issues.
 
-## Maintenance task
+## Maintenance tasks
 
-One task, `repo-tidy`, does the whole tidy-up in a single pass:
+One task per dimension. Each is triggered by the only thing that changes its answers, scoped to
+exactly those objects, and reconciles **its own** standing tracker — so no task waits on another and
+a dimension with nothing to do stays silent:
 
-| Runs when | The pass | smarts |
-|---|---|---|
-| a non-default branch, a PR, or an issue was touched (or weekly) | assess branches → assess PRs → triage issues → reconcile the tracker | medium |
+| Task | frequency | Runs when | Scope | Acts? | model |
+|---|---|---|---|---|---|
+| `tidy-issues` | daily | an issue was touched, or `main` moved substantively | the touched issues — **all** open ones on a substantive move | **yes** — close / label / comment | `sonnet` |
+| `tidy-prs` | weekly | any PR is open | every open PR (a full sweep) | no — recommends closes | `sonnet` |
+| `tidy-branches` | weekly | any branch beyond the default and the infra branches exists | every such branch (a full sweep) | no — recommends deletions | `sonnet` |
 
-The pass applies each per-object skill (`single-branch-status` / `single-pr-status` /
-`single-issue-triage`) across the targets the plan hands it, then rewrites the repo's standing tracker
-from their verdicts — branches and PRs **assess-only**, issues **act** (close/label/comment). Doing
-dimensions-then-reconcile inside one worker means there is no ordering barrier: the unit is
-independent/concurrent like every other. (It replaced four separate tasks — `branch-cleanup`,
-`pr-assess`, `issue-triage`, `tidy-report` — once the skills owned the per-object method.)
+Each applies its per-object skill (`single-issue-triage` / `single-pr-status` /
+`single-branch-status`) across the targets the precondition hands it, then rewrites its tracker
+(`Claudinite tracker: Tidy Issues` / `Tidy PRs` / `Tidy Branches`) from those verdicts.
+
+**Where the "full run" lives.** For issues it is signal-triggered: a substantive default-branch move
+widens scope to every open issue, because that move is what can make an old issue implemented. For
+PRs and branches it is the **frequency declaration** — weekly, full every time (a branch verdict has
+no windowed subset to narrow to, and both are standing recommendations for a human rather than
+same-day alerts). Never a `fullSweep` flag inside a daily task: weekly is a declaration, not a gate
+trick (per-project-scheduling DESIGN §3).

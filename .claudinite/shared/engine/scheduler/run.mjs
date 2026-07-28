@@ -11,7 +11,7 @@
 // shell's judgment (the same split the fleet planner uses).
 
 import { pathToFileURL } from 'node:url';
-import { dueSlots } from './slots.mjs';
+import { dueSlots, mostRecentSlot } from './slots.mjs';
 import {
   planDispatch, dispatchTitle, dispatchBody, DISPATCH_PREFIX, READY_LABEL, NEEDS_HUMAN_LABEL,
   SCHEDULER_LABELS, readyLabelForScope, staleDispatchIssues, staleEscalationComment,
@@ -19,20 +19,50 @@ import {
   AGENT_RUNNING_LABEL,
 } from './dispatch.mjs';
 import { isAgentless } from './model-map.mjs';
+import { localSignalContext } from './signals/local.mjs';
 import { runPreprocessing, preprocessingFailure, agentRequestPath, clearAgentRequest, agentRequested } from './preprocess.mjs';
 
 // The due tasks, each paired with the slot it runs under. Union the discovered
 // tasks' frequencies, ask slots which are due (run-ledger math), then map due
 // frequencies back to their tasks. A task whose frequency isn't due drops out.
-export function computeDueTaskSlots(tasks, schedule, now, lastSuccess) {
+export function computeDueTaskSlots(tasks, schedule, now, lastSuccess, forced = []) {
   const frequencies = [...new Set(tasks.map((t) => t.decl.frequency))];
   const due = new Map(dueSlots(frequencies, schedule, now, lastSuccess).map((d) => [d.frequency, d]));
   const out = [];
   for (const task of tasks) {
     const slot = due.get(task.decl.frequency);
-    if (slot) out.push({ task, slotId: slot.slotId, slotTime: slot.slotTime });
+    if (slot) { out.push({ task, slotId: slot.slotId, slotTime: slot.slotTime }); continue; }
+    // A FORCED task runs under its most-recent slot even though that slot has
+    // already been run. This gate is the reason forcing has to live here at all:
+    // the due list is computed BEFORE any precondition, so a task whose slot has
+    // passed is never looked at again — and a mid-day forced run is the only kind
+    // that matters (#515). `planRun` then skips its precondition outright.
+    if (forced.includes(task.id)) {
+      const s = mostRecentSlot(task.decl.frequency, schedule, now);
+      out.push({ task, slotId: s.id, slotTime: s.time, forced: true });
+    }
   }
   return out;
+}
+
+// The verdict a forced task gets INSTEAD of its precondition. The context line
+// is generic on purpose — it names the mechanism, not the task — and it is there
+// because a dispatch issue's Context is the agent's binding scope: a forced
+// dispatch that carried none would read as a scope of nothing, and the agent
+// should know it arrived by a hand-started run rather than a met condition.
+const FORCED_VERDICT = Object.freeze({
+  run: true,
+  reason: 'forced by FORCE_TASKS on a manual scheduler run — its precondition was not evaluated',
+  context: Object.freeze(['This run was forced manually (FORCE_TASKS on a workflow_dispatch); the task\'s own precondition was not evaluated, so nothing here asserts there is work to do. Do only what the task file specifies, and converge to a no-op if there is nothing.']),
+});
+
+// The task ids a manual run forced, out of the opaque override bag. This is the
+// ONE key the engine reads from that bag, and it is deliberately generic: it
+// learns "run these task ids", never what any of them do. No task declaration
+// mentions forcing, and no precondition is consulted for a forced task — an id
+// matching no discovered task simply forces nothing.
+export function forcedTaskIds(overrides = {}) {
+  return String(overrides.FORCE_TASKS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
 // The union of signal names the due tasks declare — the scheduler collects only
@@ -76,7 +106,8 @@ export function runPrecondition(task, signals, packConfig) {
 export function renderSummary(evaluations) {
   return evaluations.map((e) => {
     const verb = !e.run ? 'skip' : e.inline ? 'run-inline' : e.dispatch?.action ?? 'run';
-    return `- ${e.pack}/${e.task} [${e.slotId}] ${verb} — ${e.reason || e.dispatch?.reason || ''}`.trimEnd();
+    const forced = e.forced ? ' (forced)' : '';
+    return `- ${e.pack}/${e.task} [${e.slotId}]${forced} ${verb} — ${e.reason || e.dispatch?.reason || ''}`.trimEnd();
   }).join('\n');
 }
 
@@ -89,20 +120,30 @@ export function renderSummary(evaluations) {
 // verdict and, when it runs, either an inline marker (agent_model: none) or a
 // dispatch decision (planDispatch).
 export async function planRun({
-  tasks, schedule, now, lastSuccess,
+  tasks, schedule, now, lastSuccess, overrides = {},
   collectSignals, packConfigFor = () => ({}), existingIssuesFor = async () => [],
 }) {
-  const dueList = computeDueTaskSlots(tasks, schedule, now, lastSuccess);
+  // `overrides` arrives as a parameter rather than out of `signals` because the
+  // due list is what decides which signals get collected — the bag has to be
+  // known before the collection it would otherwise be part of.
+  const dueList = computeDueTaskSlots(tasks, schedule, now, lastSuccess, forcedTaskIds(overrides));
   const signals = await collectSignals(signalsUnion(dueList));
 
   const evaluations = [];
-  for (const { task, slotId } of dueList) {
-    const pre = runPrecondition(task, signals, packConfigFor(task.pack));
+  for (const { task, slotId, forced } of dueList) {
+    // A FORCED task does not consult its precondition at all. "Forced" is a
+    // decision the operator already made, so asking the task whether it agrees is
+    // both redundant and a way for the answer to be no — and a task that could
+    // veto a force would need to know forcing exists, which is exactly the
+    // coupling this mechanism avoids. Nothing in a task declaration mentions
+    // forcing; the engine owns it end to end.
+    const pre = forced ? FORCED_VERDICT : runPrecondition(task, signals, packConfigFor(task.pack));
     const rec = {
       pack: task.pack, task: task.id, slotId,
       model: task.decl.agent_model, outcome: task.decl.expected_outcome,
       run: pre.run, reason: pre.reason, context: pre.context,
     };
+    if (forced) rec.forced = true;
     if (pre.error) rec.error = pre.error;
     if (pre.run) {
       // A declared agent_preprocessing runs as a subprocess BEFORE any agent
@@ -127,6 +168,53 @@ export async function planRun({
     evaluations.push(rec);
   }
   return { evaluations };
+}
+
+// The opaque override bag a MANUAL run may carry (`workflow_dispatch` input →
+// `CLAUDINITE_OVERRIDES`). GitHub cannot declare arbitrary named inputs, so the
+// workflow takes ONE free-form string and this splits it into keys.
+//
+// Exactly one key is understood: `FORCE_TASKS` (see `forcedTaskIds`), and it is
+// understood GENERICALLY — "run these task ids", never what any of them do. No
+// task declaration mentions forcing and no precondition is consulted for a forced
+// task, so the scheduler never learns what baselining is and baselining never
+// learns that forcing exists. Anything else in the bag is parsed and ignored,
+// which is what leaves room for a future override without a schema.
+//
+// `A=1,B=2`, newline-separated, or bare `A` (⇒ `'true'`). Values stay STRINGS with
+// no truthiness coercion: a task compares against the literal it documents, so
+// `FORCE_X=false` can never read as "the key is present, therefore on".
+export function parseOverrides(raw) {
+  const out = {};
+  for (const part of String(raw ?? '').split(/[,\n]/)) {
+    const token = part.trim();
+    if (!token) continue;
+    const eq = token.indexOf('=');
+    if (eq === -1) out[token] = 'true';
+    else out[token.slice(0, eq).trim()] = token.slice(eq + 1).trim();
+  }
+  return out;
+}
+
+// The `ctx` every signal collector reads (DESIGN §3.3) — the already-resolved
+// facts a collector may not go and fetch for itself, built once per run and
+// handed to `collectSignals`. Exported so the construction itself is testable:
+// the collectors' `ctx.X ?? null` seam makes them unit-testable with a hand-built
+// ctx, which is exactly why a key nothing here populates can read as "collector
+// works" forever. Assert against THIS, not a hand-built shape.
+// `root` is the Action-side checkout: the manifest version, the local-pack
+// presence and the configured retention are all read from it (signals/local.mjs),
+// because a scheduled run already has the tree on disk and an API round-trip
+// would buy nothing.
+export function buildSignalContext({ root, repo, defaultBranch, now, sinceIso, config, fleet = null, packConfigFor = () => ({}) }) {
+  const local = localSignalContext(root, { packIds: config.packs ?? [], packConfigFor });
+  return {
+    repo, defaultBranch, now, sinceIso, config,
+    activePacks: config.packs, fleet,
+    manifestVersion: local.manifestVersion,
+    hasLocalPacks: local.hasLocalPacks,
+    retentionDays: local.retentionDays,
+  };
 }
 
 // --- CLI: the thin I/O shell the vendored workflow invokes -------------------
@@ -231,9 +319,21 @@ export async function maintainDispatchIssues(gh, repo, now, { labelsEnsured = fa
 export async function ensureLabels(gh, repo, labels) {
   for (const { name, color, description } of labels) {
     const res = await gh(`/repos/${repo}/labels`, { method: 'POST', body: { name, color, description } });
-    if (res.status !== 201 && res.status !== 422) {
-      console.log(`! could not ensure label "${name}": ${res.status}`);
+    if (res.status === 201) continue;                       // created to spec — nothing further
+    if (res.status === 422) {
+      // The NAME is taken; that says nothing about the colour or description. A
+      // label GitHub auto-created (applying an unknown name to an issue mints it
+      // grey `ededed`, no description) would keep those defaults for good, because
+      // POST 422s forever. So reconcile the shape, not just the existence — that
+      // is what makes the self-healing claim above true for drift and not only for
+      // deletion. PATCH is idempotent: an already-correct label is a no-op write.
+      const fix = await gh(`/repos/${repo}/labels/${encodeURIComponent(name)}`, {
+        method: 'PATCH', body: { color, description },
+      });
+      if (fix.status !== 200) console.log(`! could not reconcile label "${name}": ${fix.status}`);
+      continue;
     }
+    console.log(`! could not ensure label "${name}": ${res.status}`);
   }
 }
 
@@ -279,14 +379,24 @@ async function main() {
     }
   }
 
-  const ctx = {
-    repo, defaultBranch, now: now.toISOString(), sinceIso, config,
-    activePacks: config.packs, fleet,
-  };
   const packConfigFor = (packId) => config.packConfig?.[packId] ?? {};
 
+  // An override only ever arrives on a hand-started run, and it makes a task run
+  // that its own precondition would have skipped — so say so in the log. An
+  // unattended system that can be forced silently is one whose run history stops
+  // explaining itself.
+  const overrides = parseOverrides(process.env.CLAUDINITE_OVERRIDES);
+  const overrideKeys = Object.keys(overrides);
+  if (overrideKeys.length > 0) {
+    console.log(`- manual run overrides: ${overrideKeys.map((k) => `${k}=${overrides[k]}`).join(', ')}`);
+  }
+
+  const ctx = buildSignalContext({
+    root, repo, defaultBranch, now: now.toISOString(), sinceIso, config, fleet, packConfigFor,
+  });
+
   const { evaluations } = await planRun({
-    tasks, schedule, now, lastSuccess,
+    tasks, schedule, now, lastSuccess, overrides,
     collectSignals: (names) => collectSignals(gh, ctx, names),
     packConfigFor,
     existingIssuesFor: (pack, task) => existingIssuesViaSearch(gh, repo, pack, task),

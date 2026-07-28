@@ -18,7 +18,12 @@ export default {
   // [skip ci] / nightly-baselining commit advancing main is not a lesson to
   // extract — `commits.substantiveChange` already applies that classification.
   // Pass the substantive shas + touched PR/issue numbers as binding scope so the
-  // worker reads exactly the window that triggered it.
+  // worker reads exactly the window that triggered it — INCLUDING the PRs merged
+  // during it. Context is binding scope and task.md forbids widening past it, so a
+  // merged PR the precondition does not name is unreadable to the worker; merged
+  // PRs carry the review discussion behind a change, usually the window's richest
+  // lesson source. This does not change WHEN the task fires — the gate is still a
+  // substantive default-branch change — only what the run is allowed to read.
   precondition(signals) {
     const commits = signals.commits ?? {};
     if (!commits.substantiveChange) {
@@ -26,8 +31,10 @@ export default {
     }
     const shas = (commits.list ?? []).filter((c) => c.substantive).map((c) => c.sha.slice(0, 7));
     const prs = signals.prs?.touched ?? [];
+    const merged = (signals.prs?.merged ?? []).map((p) => p.number);
     const issues = signals.issues?.touched ?? [];
     const context = [`Scope: the ${shas.length} substantive commit(s) in the window — ${shas.join(', ')}.`];
+    if (merged.length) context.push(`PRs merged in the window — read each one's diff and its review discussion: ${merged.map((n) => `#${n}`).join(', ')}.`);
     if (prs.length) context.push(`PRs touched in the window: ${prs.map((n) => `#${n}`).join(', ')}.`);
     if (issues.length) context.push(`Issues touched in the window: ${issues.map((n) => `#${n}`).join(', ')}.`);
     return { run: true, reason: `${shas.length} substantive commit(s) in the window`, context };

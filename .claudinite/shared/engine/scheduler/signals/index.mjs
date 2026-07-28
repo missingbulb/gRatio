@@ -5,7 +5,11 @@
 // shared `(gh, ctx)` and returns a plain data object a precondition reads.
 //
 // Pure over the injected `gh` reader and a `ctx` of already-resolved facts, so
-// the whole layer tests against a fake `gh` with no live GitHub.
+// the whole layer tests against a fake `gh` with no live GitHub. The ctx facts a
+// collector cannot fetch for itself (manifest version, local-pack presence,
+// retention) are read off the checkout by run.mjs — see signals/local.mjs.
+
+import { LOCAL_PACK_ROOTS } from './local.mjs';
 
 // A default-branch commit is genuine project work unless it is bot/CI
 // housekeeping or one of Claudinite's own automated writes — the same exclusions
@@ -18,6 +22,23 @@ const isSubstantive = (c) => {
   return !HOUSEKEEPING.test(c.commit?.message ?? '');
 };
 
+// The capture stamp a conversation log's filename leads with:
+// `2026-07-19T0940Z--issue-123--<session>.jsonl` — minute precision, optionally
+// `-<k>` suffixed on a same-minute collision. Anything else on the logs branch
+// (its README) is not a log and has no age. The writer of that name is the
+// capture step in the pack that owns the branch, which core deliberately does not
+// import (engine/ depends on no pack, per the barrier); the drift guard in
+// engine-tests/scheduler/signals.test.mjs pins this parse to that writer, so
+// changing one without the other fails loudly rather than silently retiring the
+// prune trigger.
+const LOG_STAMP = /^(\d{4}-\d{2}-\d{2})T(\d{2})(\d{2})Z(?:-\d+)?--issue-\d+--.+\.jsonl$/;
+function logStampMs(name) {
+  const m = LOG_STAMP.exec(name);
+  if (!m) return null;
+  const ms = Date.parse(`${m[1]}T${m[2]}:${m[3]}:00Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 async function paged(gh, path) {
   const out = [];
   for (let page = 1; ; page += 1) {
@@ -29,6 +50,37 @@ async function paged(gh, path) {
   }
   return out;
 }
+
+// Like `paged`, but for a listing sorted `updated` DESCENDING and bounded by the
+// window: it stops at the first item outside it and does not fetch the next page.
+// The closed-PR listing is otherwise the repo's whole history — a window read must
+// not cost proportionally to that.
+async function pagedWindow(gh, path, inWindow) {
+  const out = [];
+  for (let page = 1; ; page += 1) {
+    const sep = path.includes('?') ? '&' : '?';
+    const { status, json } = await gh(`${path}${sep}per_page=100&page=${page}`);
+    if (status !== 200 || !Array.isArray(json) || json.length === 0) break;
+    const kept = [];
+    for (const item of json) {
+      if (!inWindow(item)) break;
+      kept.push(item);
+    }
+    out.push(...kept);
+    if (kept.length < json.length || json.length < 100) break;
+  }
+  return out;
+}
+
+// A merged PR is mineable unless it is bot work or one of Claudinite's own
+// automated writes — the SAME two exclusions `isSubstantive` and the `issues`
+// collector apply, kept together on purpose. The housekeeping regex already covers
+// the growth tasks' own `Claudinite growth: …` PRs and the scheduler's
+// `[claudinite-task]` titles, so the self-trigger guards survive the widening.
+const isMinablePr = (p) => {
+  if ((p.user?.login ?? '').endsWith('[bot]')) return false;
+  return !HOUSEKEEPING.test((p.title ?? '').trim());
+};
 
 // Commit objects in the window, with their changed-file lists resolved (one read
 // per commit — the window is a handful of commits).
@@ -57,9 +109,28 @@ const COLLECTORS = {
   async prs(gh, ctx) {
     const open = await paged(gh, `/repos/${ctx.repo}/pulls?state=open&sort=updated&direction=desc`);
     const since = new Date(ctx.sinceIso);
+
+    // PRs MERGED during the window, in a field of their OWN. A merged PR carries
+    // the review discussion and the "what changed and why" — usually the richest
+    // lesson material in a window — and `state=open` alone made it unreachable to
+    // any task bound to this signal. It is deliberately NOT folded into `open` or
+    // `touched`: those two are other tasks' target sets (the PR tidy sweep acts on
+    // `open`), and widening them here would silently widen what those tasks do.
+    // The same exclusions the `commits` and `issues` collectors apply hold here, so
+    // a growth task still cannot see its own merged output and re-trigger on it.
+    const closed = await pagedWindow(
+      gh,
+      `/repos/${ctx.repo}/pulls?state=closed&sort=updated&direction=desc`,
+      (p) => new Date(p.updated_at) >= since,
+    );
+    const merged = closed
+      .filter((p) => p.merged_at && new Date(p.merged_at) >= since && isMinablePr(p))
+      .map((p) => ({ number: p.number, title: p.title, mergedAt: p.merged_at }));
+
     return {
       open: open.map((p) => ({ number: p.number, title: p.title, updatedAt: p.updated_at })),
       touched: open.filter((p) => new Date(p.updated_at) >= since).map((p) => p.number),
+      merged,
     };
   },
 
@@ -92,7 +163,7 @@ const COLLECTORS = {
   // one (under either local root during the rename window).
   async localPacks(gh, ctx) {
     const commits = ctx.commits ?? await windowCommits(gh, ctx.repo, ctx.defaultBranch, ctx.sinceIso);
-    const touches = (f) => f.startsWith('.claudinite/local/packs/') || f.startsWith('.claudinite/local_packs/');
+    const touches = (f) => LOCAL_PACK_ROOTS.some((r) => f.startsWith(r));
     const present = ctx.hasLocalPacks ?? null;
     return { present, changedInWindow: commits.some((c) => c.files.some(touches)) };
   },
@@ -114,9 +185,34 @@ const COLLECTORS = {
 
   // The conversation-logs orphan branch: present, and the age of its oldest JSONL
   // vs the configured retention (the age-based prune's trigger on quiet repos).
+  //
+  // Age comes from the FILENAME stamp, not from git/commit metadata. Commit dates
+  // are the authoritative record of when a blob landed, but they are the wrong
+  // authority here and cost more: (a) AGREEMENT — the consuming task's prune rule
+  // is itself stated over the filename stamp ("each log whose filename stamp is
+  // older than retention"), so a commit-date trigger would dispatch an agent over
+  // logs the worker then declines to prune, and stay silent on ones it would
+  // prune; (b) COST — one tree
+  // read covers the whole branch, against one commit-history read per file, and
+  // the branch accumulates one log per merged session. The name is machine-written
+  // by the pack's capture step, never user input, so "trusting the name" is
+  // trusting our own writer — and a drift guard pins the two formats together.
   async conversationLogs(gh, ctx) {
-    const { status } = await gh(`/repos/${ctx.repo}/branches/conversation-logs`);
-    return { present: status === 200, retentionDays: ctx.retentionDays ?? null };
+    const retentionDays = ctx.retentionDays ?? null;
+    const branch = await gh(`/repos/${ctx.repo}/branches/conversation-logs`);
+    if (branch.status !== 200) return { present: false, retentionDays, oldestLogAgeDays: null, logCount: 0 };
+
+    // Logs sit flat at the branch root beside its README; a non-200 tree read (or
+    // anything unparsable on it) is "no age to judge", never a failed collection.
+    const { status, json } = await gh(`/repos/${ctx.repo}/git/trees/conversation-logs`);
+    const stamps = (status === 200 && Array.isArray(json?.tree) ? json.tree : [])
+      .map((e) => logStampMs(e?.path ?? ''))
+      .filter((ms) => ms !== null);
+    const now = new Date(ctx.now).getTime();
+    const oldestLogAgeDays = stamps.length && Number.isFinite(now)
+      ? (now - Math.min(...stamps)) / 86400000
+      : null;
+    return { present: true, retentionDays, oldestLogAgeDays, logCount: stamps.length };
   },
 
   // The vendored-mount provenance stamp and its age; the canon head sha when the

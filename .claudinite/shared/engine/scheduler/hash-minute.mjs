@@ -20,7 +20,7 @@ export const MINUTE_MAX = 50;
 const BAND = MINUTE_MAX - MINUTE_MIN + 1; // 41
 
 // FNV-1a over the lowercased full name → a minute in [MINUTE_MIN, MINUTE_MAX].
-// Same hash family as routines/fleet/schedule.mjs's weekday bucket: deterministic,
+// Same hash family as the retired central planner's weekday bucket: deterministic,
 // well-spread, and Math.imul keeps the multiply in 32-bit range. Keyed on the repo
 // full name ("owner/repo") so the value is stable across re-vendors and re-derivable
 // anywhere the name is known.
