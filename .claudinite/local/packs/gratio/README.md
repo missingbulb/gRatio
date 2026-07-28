@@ -13,6 +13,7 @@ repeats none of it. Declared by hand as `local/gratio`.
 | `gratio-no-sample-special-casing` | No single-sample special-casing | check — `gratio/*.py` (main path, spikes excluded) may not name a sample stem in code; comments and docstrings citing a sample as evidence are fine |
 | `gratio-generated-gt-masks` | Native GT masks are generated | check (work scope) — `data/samples/masks/native/*.png` may not change without the annotated crop or the extraction that produces them |
 | `gratio-optional-skimage-import` | scikit-image imported lazily | check — scikit-image is dev-only; the main path imports it inside a guarded function, so the pipeline degrades instead of failing to import |
+| `gratio-validation-tiers-separate` | Two validation tiers, never merged | check — the mask-scoring harness (anything importing `gratio.evaluate`, plus the GT builders) may not read an external set that ships a published-g table and no masks; a set with its own `masks/` is the legitimate mask tier and is not flagged |
 
 ## Prose (`RULES.md`) — by section
 
@@ -20,7 +21,6 @@ repeats none of it. Declared by hand as `local/gratio`.
 |---|---|
 | Myelin rules stay scale-free | prose |
 | Recall is the hard constraint | prose |
-| Two validation tiers, never merged | prose |
 | Borders look hand-traced | prose |
 | Show report.py, write R-note | prose |
 

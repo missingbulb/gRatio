@@ -1,6 +1,7 @@
 import noSampleSpecialCasing from './no-sample-special-casing.mjs';
 import generatedGtMasks from './generated-gt-masks.mjs';
 import optionalSkimageImport from './optional-skimage-import.mjs';
+import validationTiersSeparate from './validation-tiers-separate.mjs';
 
 // gRatio's own pack: the measurement invariants and repo mechanics that are
 // specific to this project and to no facet the canon homes. The project *class*
@@ -17,7 +18,7 @@ export default {
   detect: null,
   marker: null,
   prose: 'RULES.md',
-  rules: [noSampleSpecialCasing, generatedGtMasks, optionalSkimageImport],
+  rules: [noSampleSpecialCasing, generatedGtMasks, optionalSkimageImport, validationTiersSeparate],
   skills: [],
   run_daily: [],
 };

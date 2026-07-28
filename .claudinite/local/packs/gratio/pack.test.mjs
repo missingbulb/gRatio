@@ -11,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import noSampleSpecialCasing from './no-sample-special-casing.mjs';
 import generatedGtMasks from './generated-gt-masks.mjs';
 import optionalSkimageImport from './optional-skimage-import.mjs';
+import validationTiersSeparate from './validation-tiers-separate.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
@@ -84,8 +85,67 @@ test('generated-gt-masks is quiet when the annotated crop changed too', () => {
   }), []);
 });
 
+// A mask-free (published-g, no masks) external set, as macaque_cc actually sits
+// on disk: a labels table, images, and nothing mask-shaped.
+const G_LABELLED_SET = {
+  'data/external/macaque_cc/gratio_labels.csv': 'image,g\nSegment_1,0.70\n',
+  'data/external/macaque_cc/images/Segment_1.png': '',
+  'data/external/macaque_cc/fetch.py': '# downloader\n',
+};
+
+// A tier-2 external set that ships its own annotated masks — the legitimate
+// mask-tier case that must NOT fire.
+const MASKED_SET = {
+  'data/external/adseg_sem/images/img_1.png': '',
+  'data/external/adseg_sem/masks/img_1_seg-axonmyelin.png': '',
+  'data/external/adseg_sem/gratio_labels.csv': 'image,g\nimg_1,0.62\n',
+};
+
+test('validation-tiers-separate fires when the IoU harness reads a mask-free set', () => {
+  const found = validationTiersSeparate.run(ctxOf({
+    ...G_LABELLED_SET,
+    'evaluate_segmentation.py': 'from gratio.evaluate import evaluate\n'
+      + 'RAW_DIR = "data/external/macaque_cc/crops"\n',
+  }));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 2);
+});
+
+test('validation-tiers-separate fires when a GT builder targets a mask-free set', () => {
+  const found = validationTiersSeparate.run(ctxOf({
+    ...G_LABELLED_SET,
+    'build_ground_truth.py': 'import cv2\nfor p in glob.glob("data/external/*/images/*.png"):\n    pass\n',
+  }));
+  assert.equal(found.length, 1);
+});
+
+test('validation-tiers-separate tolerates the other tier named in prose', () => {
+  assert.deepEqual(validationTiersSeparate.run(ctxOf({
+    ...G_LABELLED_SET,
+    'evaluate_segmentation.py': '"""Scores masks; data/external/macaque_cc has none."""\n'
+      + 'from gratio.evaluate import evaluate\n'
+      + 'RAW_DIR = "data/samples"  # not data/external/macaque_cc\n',
+  })), []);
+});
+
+test('validation-tiers-separate leaves the mask-free harness alone', () => {
+  assert.deepEqual(validationTiersSeparate.run(ctxOf({
+    ...G_LABELLED_SET,
+    'validate_external.py': 'from gratio import segment\nDATA_DIR = "data/external/macaque_cc"\n',
+  })), []);
+});
+
+test('validation-tiers-separate allows an external set that ships its own masks', () => {
+  assert.deepEqual(validationTiersSeparate.run(ctxOf({
+    ...MASKED_SET,
+    'evaluate_segmentation.py': 'from gratio.evaluate import evaluate\n'
+      + 'RAW_DIR = "data/external/adseg_sem/images"\n',
+  })), []);
+});
+
 test('the repo as it stands is clean under every rule', () => {
   const ctx = realCtx();
   assert.deepEqual(noSampleSpecialCasing.run(ctx), []);
   assert.deepEqual(optionalSkimageImport.run(ctx), []);
+  assert.deepEqual(validationTiersSeparate.run(ctx), []);
 });

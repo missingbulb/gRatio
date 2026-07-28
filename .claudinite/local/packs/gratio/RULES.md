@@ -4,7 +4,7 @@ This project's own pack: what is specific to measuring a myelin g-ratio from EM
 cross-sections here, and to nothing the canon packs already home. The working
 loop (show every step, ground truth annotated never invented, numbered
 iterations, spikes vs. main path) is the declared `research-project` pack's — it
-is not repeated here. Three rules of this pack are deterministic checks
+is not repeated here. Four rules of this pack are deterministic checks
 (`README.md` lists them); what follows is the judgment that has no static
 signature.
 
@@ -23,15 +23,6 @@ A missed axon does not merely lose one fibre: its myelin merges into a
 neighbour's and corrupts *that* fibre's g. Tune for detection recall 1.0 with no
 false positives first; only then maximise IoU. A change that trades a detection
 for boundary accuracy is a regression however good the IoU delta looks.
-
-## Two validation tiers — never merge them
-
-The three `data/samples/` images have hand-drawn masks and score *segmentation*
-(`evaluate_segmentation.py`, `report.py`). External sets such as
-`data/external/macaque_cc/` have a **published g and no masks**, and score only
-the *number* (`validate_external.py`). Never wire a mask-free set into the IoU
-harness — the masks it would need do not exist, and inventing them turns the
-baseline into an echo of the pipeline (`docs/reference/external_datasets.md`).
 
 ## Borders look hand-traced
 
