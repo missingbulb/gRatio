@@ -11,18 +11,27 @@ import { finding } from '../../../../engine/checks/helpers/findings.mjs';
 // So a REST client, a raw api.github.com fetch, or a GITHUB_TOKEN read in in-session
 // code is the tell that the code was built as if it were the CI executor — it cannot
 // authenticate in the MCP-only session it is scheduled in. This is exactly the
-// regression that turned the fleet daily maintenance into a no-op day when its
-// planner + migration passes were (re)written as token-authed REST node scripts:
-// every step 401'd because the scheduled session has no shell GitHub REST credential.
+// regression that turned the (since-retired) fleet daily maintenance into a no-op
+// day when its planner + migration passes were (re)written as token-authed REST node
+// scripts: every step 401'd because the scheduled session has no shell GitHub REST
+// credential.
 //
 // RELEVANCE (see engine/checks/README.md "Adding a rule" / routine-structure.mjs): a skill
 // check runs on every repo, so it must detect relevance before asserting. Here the
-// scope IS the relevance gate — only .mjs under routines/, migrations/, or a
-// run_daily/ dir (the in-session code surface). A dispatch-only executor's own code
-// (e.g. a census invoked by a workflow) lives outside those trees and keeps its REST
-// client legitimately, so it is never scanned.
+// scope IS the relevance gate — only .mjs under routines/ or migrations/ (the
+// in-session code surface). A dispatch-only executor's own code (e.g. a census
+// invoked by a workflow) lives outside those trees and keeps its REST client
+// legitimately, so it is never scanned.
+//
+// A scheduled task's `tasks/<name>/` tree is deliberately NOT in scope: a task's
+// `agent_preprocessing` worker.mjs runs as an Action-side subprocess with an
+// injected GITHUB_TOKEN, the one sanctioned non-MCP surface
+// (per-project-scheduling DESIGN §10), so a REST client there is correct, not a
+// smell. The former `run_daily/` arm retired with the central planner (#394): no
+// repo carries run_daily descriptors any more, and the per-repo scheduler
+// dispatches tasks/, not run_daily/.
 
-const IN_SESSION = [/^routines\//, /^migrations\//, /(^|\/)run_daily\//];
+const IN_SESSION = [/^routines\//, /^migrations\//];
 const inSession = (f) => f.endsWith('.mjs') && !f.endsWith('.test.mjs') && IN_SESSION.some((re) => re.test(f));
 
 // Actionable REST/token smells — matched as code, not prose mentions (a comment

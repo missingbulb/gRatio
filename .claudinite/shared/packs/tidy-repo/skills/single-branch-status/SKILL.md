@@ -1,6 +1,6 @@
 ---
 name: single-branch-status
-description: Assess one branch's landed status — merged, already-in-main, superseded, orphaned, or genuine unmerged work — read-only. Use when triaging whether a single branch is safe to delete, judging by content not the ref's name (e.g. the tidy-repo repo-tidy task hands you branches to assess).
+description: Assess one branch's landed status — merged, already-in-main, superseded, orphaned, or genuine unmerged work — read-only. Use when triaging whether a single branch is safe to delete, judging by content not the ref's name (e.g. the tidy-repo pack's tidy-branches task hands you branches to assess).
 ---
 
 # Single-branch status

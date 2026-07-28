@@ -1,6 +1,6 @@
 ---
 name: single-issue-triage
-description: Triage one open issue and take the first applicable action — close-if-implemented, needs-decision, blocked, quick-win, or leave. Use when acting on a single issue; "implemented in main" must be verified against main's current content and the default is to comment, not close (e.g. the tidy-repo repo-tidy task hands you issues to triage).
+description: Triage one open issue and take the first applicable action — close-if-implemented, needs-decision, blocked, quick-win, or leave. Use when acting on a single issue; "implemented in main" must be verified against main's current content and the default is to comment, not close (e.g. the tidy-repo pack's tidy-issues task hands you issues to triage).
 ---
 
 # Single-issue triage

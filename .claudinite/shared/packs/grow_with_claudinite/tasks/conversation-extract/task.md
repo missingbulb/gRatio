@@ -32,9 +32,10 @@ wall-time numbers.
    (`git ls-tree --name-only origin/conversation-logs`). No branch, or no `*.jsonl` → stop; a quiet repo is
    the common, valid outcome.
 2. **Read retention.** From this repo's `.claudinite-checks.json`, the grow_with_claudinite entry's
-   `config.retention_days`. Unset → the prune in step 5 is skipped entirely (capture-only adoption). (The
-   precondition already declined to dispatch a quiet repo whose retention is unset, so on a quiet dispatch you
-   will have retention set.)
+   `config.retention_days`. Unset → the prune in step 5 is skipped entirely (capture-only adoption). (On a
+   quiet repo the precondition dispatches only when retention is set *and* the branch's oldest log — by its
+   filename stamp — is already past it, so a quiet dispatch always has both retention set and something to
+   prune.)
 3. **Fresh pass.** For each log captured in the recent window (its filename carries the capture stamp; corpus
    dedup makes an overlapping re-read harmless, so err toward re-reading the last several days): read it
    (`git show origin/conversation-logs:<file>`) and run the extracting-lessons method over it — including the
@@ -69,7 +70,7 @@ When a run lands a lesson, posts a summary, or prunes logs, log it as one dated 
 
 Whether a lesson clears the bar — and whether the hindsight pass should overturn a fresh-pass call — is the
 judgment this task exists for, and its PR auto-merges without a human review gate. This task declares
-`model: opus`; the executor dispatches its subagent there.
+`agent_model: opus`; the executor dispatches its subagent there.
 
 ## What this task must never do
 

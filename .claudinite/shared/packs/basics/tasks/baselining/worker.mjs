@@ -69,6 +69,32 @@ export function normalizeDelivery(raw) {
   return null;
 }
 
+// The default a repo gets when it never declared one.
+export const DEFAULT_DELIVERY = 'auto-merge';
+
+// `maintenance.delivery` is always EXPLICIT — but a key that is simply absent is
+// DRIFT, not an error, and drift is what a converge exists to repair. A repo
+// adopted before the key existed, or one whose key was hand-removed, would
+// otherwise fail baselining every night forever with nothing that could ever fix
+// it (the only writer is check_the_world --init, which runs once at adoption).
+// So: materialize the default into .claudinite-checks.json and carry on — it
+// rides the same maintenance commit as the rest of the converge, and the repo
+// self-heals on one cycle.
+//
+// An UNRECOGNIZED value is a different thing entirely: someone wrote an intent
+// the worker cannot honour, and silently substituting a default would deliver
+// the opposite of what they asked for. That still fails the run (delivery: null).
+//
+// Returns { delivery, materialize } — `delivery` null only for the unrecognized
+// case. A content-free value (empty/whitespace) carries no intent, so it is
+// treated as absent rather than as a typo.
+export function resolveDelivery(raw) {
+  if (raw == null || String(raw).trim() === '') {
+    return { delivery: DEFAULT_DELIVERY, materialize: true };
+  }
+  return { delivery: normalizeDelivery(raw), materialize: false };
+}
+
 // The pending AGENTIC notes: those dated on/after the DAY of the prior stamp
 // (same-day inclusive, #330), oldest first. `agenticList` is registry.mjs
 // `agenticMigrations(all)` — already filtered to records carrying a valid
@@ -98,13 +124,18 @@ export function maintenanceBranchName(dateStr, seed) {
   return `${MAINT_PREFIX}-${dateStr}-${seed}`;
 }
 
-// The head branch of the family's open maintenance PR, found by head-branch
-// PREFIX (idempotency is by prefix now that the name carries a per-cycle seed):
-// a run reuses that branch/PR so PRs never pile up night-over-night. null → mint
-// a fresh one.
+// The family's open maintenance PR, found by head-branch PREFIX (idempotency is
+// by prefix now that the name carries a per-cycle seed): a run reuses that PR so
+// they never pile up night-over-night. null → mint a fresh one. The whole PR is
+// returned, not just its ref, because the reuse path needs its `node_id` to
+// re-assert the auto-merge arm each cycle.
+export function openMaintenancePull(pulls, prefix = MAINT_PREFIX) {
+  return (pulls ?? []).find((pr) => String(pr?.head?.ref ?? '').startsWith(prefix)) ?? null;
+}
+
+// Its head branch alone — the shape most callers want.
 export function openMaintenanceBranch(pulls, prefix = MAINT_PREFIX) {
-  const p = (pulls ?? []).find((pr) => String(pr?.head?.ref ?? '').startsWith(prefix));
-  return p ? p.head.ref : null;
+  return openMaintenancePull(pulls, prefix)?.head?.ref ?? null;
 }
 
 // The escalation predicate (owner, 2026-07-23): agent iff a pending agentic note,
@@ -157,9 +188,9 @@ function checkTheWorldPasses(root) {
 // reconcile stance for this bot-owned branch.
 async function deliver(root, repo, base, token, delivery, seed) {
   const { json: pulls } = await gh(token, `/repos/${repo}/pulls?state=open&per_page=100`);
-  let branch = openMaintenanceBranch(Array.isArray(pulls) ? pulls : []);
-  const reuse = Boolean(branch);
-  if (!branch) branch = maintenanceBranchName(new Date().toISOString().slice(0, 10), seed);
+  let pr = openMaintenancePull(Array.isArray(pulls) ? pulls : []);
+  const reuse = Boolean(pr);
+  let branch = reuse ? pr.head.ref : maintenanceBranchName(new Date().toISOString().slice(0, 10), seed);
 
   git(['-C', root, 'checkout', '-B', branch]);
   git(['-C', root, 'add', '-A']);
@@ -172,16 +203,26 @@ async function deliver(root, repo, base, token, delivery, seed) {
     const body = delivery === 'auto-merge'
       ? 'Automated Claudinite maintenance (deterministic converge + any migration notes). Regenerated each cycle; auto-merges once this repo\'s checks pass.'
       : 'Automated Claudinite maintenance (deterministic converge + any migration notes). Regenerated each cycle; left for your review.';
-    const { json: pr } = await gh(token, `/repos/${repo}/pulls`, {
+    ({ json: pr } = await gh(token, `/repos/${repo}/pulls`, {
       method: 'POST', body: { head: branch, base, title: 'Claudinite maintenance', body },
-    });
-    if (delivery === 'auto-merge' && pr?.node_id) {
-      // ARM GitHub's native auto-merge (not an immediate merge): the PR lands
-      // automatically once this repo's required checks pass, and the run never
-      // blocks on CI. Auto-merge is a GraphQL-only mutation. Best-effort — if the
-      // repo hasn't enabled auto-merge, the PR simply stays open for review.
-      await enableAutoMerge(token, pr.node_id).catch(() => {});
-    }
+    }));
+  }
+
+  // ARM GitHub's native auto-merge (not an immediate merge): the PR lands
+  // automatically once this repo's required checks pass, and the run never blocks
+  // on CI. Auto-merge is a GraphQL-only mutation.
+  //
+  // RE-ASSERTED EVERY CYCLE, reuse or not. The arm is best-effort, and there are
+  // three ordinary ways for it to be absent from an open maintenance PR: the
+  // mutation failed when the PR was opened; the repo had not enabled auto-merge
+  // yet (a settings change nothing here can see); or the member flipped
+  // `maintenance.delivery` from `review` to `auto-merge` while this PR was
+  // already open. Arming only on the opening cycle left all three unrecoverable —
+  // every later run reuses the branch and never retried, so the PR sat open
+  // forever. The stable-PR form this superseded re-asserted the arm on every run;
+  // this restores that. Idempotent: arming an already-armed PR is a no-op.
+  if (delivery === 'auto-merge' && pr?.node_id) {
+    await enableAutoMerge(token, pr.node_id).catch(() => {});
   }
   return branch;
 }
@@ -247,10 +288,17 @@ export async function main() {
     console.log('baselining: no vendored-mount stamp — nothing to self-refresh (canon home or pre-adoption)');
     return; // quiet, no agent (matches the precondition self-skip)
   }
-  const delivery = normalizeDelivery(priorRaw?.maintenance?.delivery);
+  const { delivery, materialize } = resolveDelivery(priorRaw?.maintenance?.delivery);
   if (!delivery) {
     console.error(`baselining: maintenance.delivery "${priorRaw?.maintenance?.delivery}" is neither auto-merge nor review`);
     process.exit(1);
+  }
+  // Materialize the missing key BEFORE the converge, so the repair rides this
+  // cycle's maintenance commit like any other converged surface.
+  if (materialize) {
+    priorRaw.maintenance = { ...priorRaw.maintenance, delivery };
+    writeFileSync(checksPath, JSON.stringify(priorRaw, null, 2) + '\n');
+    console.log(`baselining: maintenance.delivery was missing — materialized "${delivery}"`);
   }
 
   // 1. Fetch canon at head as a ROOTLESS tree (drop .git so apply-vendor-set's
@@ -291,7 +339,10 @@ export async function main() {
   //    revert it and stay quiet (no nightly stamp-only noise).
   const changed = git(['-C', root, 'status', '--porcelain'])
     .split('\n').map((l) => l.slice(3)).filter(Boolean);
-  const onlyStamp = changed.length > 0 && changed.every((p) => p === '.claudinite-checks.json');
+  // `materialize` excluded: a materialized delivery key also touches only
+  // .claudinite-checks.json, and reverting it would re-drift the repo every night
+  // and never land the repair.
+  const onlyStamp = changed.length > 0 && !materialize && changed.every((p) => p === '.claudinite-checks.json');
   if (onlyStamp && priorStamp.ref === headSha && !pending.length) {
     git(['-C', root, 'checkout', '--', '.claudinite-checks.json']);
     console.log('baselining: mount already at canon head, nothing changed — agentless, quiet');

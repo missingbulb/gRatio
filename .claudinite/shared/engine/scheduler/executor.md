@@ -1,5 +1,15 @@
 # Claudinite executor
 
+> **Before anything else — name your one issue.** This session runs exactly one
+> dispatch. Step 1 resolves it **in code** from the trigger this session carries
+> and validates it; state the number it prints before you touch anything.
+> If you cannot name exactly one, **run nothing and end the session** — the
+> scheduler re-arms an unrun dispatch on its next hourly pass, so stopping costs a
+> delay while guessing costs duplicated work. **There is no fallback**: never
+> select a dispatch by listing the queue and taking one. Never process a second
+> issue in one session, under any circumstance — including when a listing shows
+> several waiting. Those are other sessions' dispatches, already running.
+
 You are the per-repo **executor** — you run the scheduled **tasks** dispatched to
 this repo (per-project-scheduling DESIGN §5). A routine wired to a dispatch label
 event started this session: the scheduler Action evaluated a task's precondition,
@@ -46,46 +56,83 @@ so use `engine/scheduler/`.
 
 ## Procedure
 
-1. **Your work list is exactly one issue: the one whose labeling triggered this
-   session.** Run it and nothing else. Do **not** list, claim, or process any
-   other open issue — not under your ready label, and not under the other one.
+1. **Resolve and validate your one dispatch — in code, first thing.**
 
-   This is load-bearing, not a style preference. One scheduler run files every due
-   task's dispatch issue within a couple of seconds, each already carrying its
-   ready label, so **one run emits one label event per issue and starts one session
-   per event**. An executor that also swept its siblings had every one of those
-   sessions build the same N-issue work list and race over it — and the claim in
-   step 3 could not prevent it, because all the sessions read the list before any
-   of them claimed. That produced the same dispatch executed two and three times
-   over: duplicate tracker issues, duplicate bug reports, duplicate PRs making the
-   same changes. One session, one issue, and the concurrency is safe by
-   construction.
+   ```bash
+   node <engine>/scheduler/resolve-dispatch.mjs self     # `fleet` if your trigger is ready-for-agent-fleet
+   ```
+
+   (`<engine>` per Engine command paths above.) It finds the `issues.labeled`
+   trigger that started this session — from **either** transport, see below —
+   and asserts in code, before any judgment of yours, that the issue body names a
+   legal task path, the file exists at HEAD, its pack is declared, and its
+   `task.mjs` sibling parses to a valid declaration. It makes no GitHub calls of
+   its own.
+
+   **Your trigger arrives one of two ways, and the shell reads both:**
+
+   - **GitHub Actions** writes the whole webhook payload to `$GITHUB_EVENT_PATH`
+     — issue number, label, and body all in one file, so this resolves in a
+     single command.
+   - **Claude Code on the web (CCR)** writes no payload file. It delivers the
+     same trigger as environment variables — `CCR_TRIGGER_SOURCE`,
+     `CCR_TRIGGER_EVENT`, `CCR_TRIGGER_REPO`, `CCR_TRIGGER_ISSUE_NUMBER` — which
+     **name your issue but carry neither its labels nor its body**. So this
+     resolves in two commands: the shell exits `13` telling you the number, you
+     fetch **that one issue** over MCP, and you re-run with what you fetched.
+
+   **Act on its exit code — that is the interface**, not the prose it prints:
+
+   | exit | verdict | what you do |
+   | --- | --- | --- |
+   | `0` | valid dispatch, your scope | Go to step 2. The printed block is your brief: issue, task path, pack, task, model, outcome ceiling, `executionTimeout`. |
+   | `13` | CCR trigger, issue named, body needed | Fetch **the printed issue and only it** over MCP — its body and its current labels — write the body verbatim to a file, and re-run: `node <engine>/scheduler/resolve-dispatch.mjs self --issue-body-file <path> --issue-labels <csv>`. Then act on *that* run's exit code. |
+   | `10` | invalid dispatch | It never runs. Comment the printed `reason`, remove the ready label, add `needs-human`, end the session. |
+   | `11` | not yours | The trigger label is the *other* executor's, no ready label at all, or the issue no longer carries a ready label (another session already claimed it). **Stop**: change nothing, comment nothing, end the session. |
+   | `12` | no trigger at all | **Stop the session immediately.** See below. |
+   | `2`, `1` | bad invocation, internal fault | Comment what you saw, add `needs-human` if you know the issue, end the session. Do not proceed on a guess. |
+
+   **State the issue number before you act**, so everything after this has one
+   unambiguous subject. Run that issue and nothing else: do **not** list, claim,
+   or process any other open issue — not under your ready label, and not under
+   the other one.
+
+   **Why one issue, and never a sweep.** One scheduler run files every due task's
+   dispatch within a couple of seconds, each already carrying its ready label, so
+   **one run emits one label event per issue and starts one session per event**.
+   An executor that also swept its siblings had every one of those sessions build
+   the same N-issue work list and race over it — and the step-2 claim cannot
+   prevent that, because all the sessions read the list before any of them claim.
+   That ran the same dispatch two and three times over: duplicate tracker issues,
+   duplicate bug reports, duplicate PRs making the same changes. One session, one
+   issue, and the concurrency is safe by construction.
 
    A dispatch whose label event never landed is **not yours to rescue**. The
    scheduler re-arms it in code on its next hourly run (`dispatch.mjs`
    `rearmDispatchIssues`) and escalates it to `needs-human` if it stays unrun past
    ~2 of its scheduling periods. Leave it alone.
 
-   *If, and only if, you genuinely cannot determine which issue triggered this
-   session*, take the **single oldest** open issue under your ready label —
-   `ready-for-agent` for a self session, `ready-for-agent-fleet` for a fleet
-   session — and run that one alone. Never take more than one, and never take an
-   issue under the other ready label; that is the other executor's to run.
+   **Exit 12 — stop the session. There is no fallback.** The trigger is how you
+   know which issue is yours. Without one you do not have a dispatch to run, and
+   **selecting one yourself is forbidden**: do not list the queue, do not take the
+   oldest, do not take *any*. Run nothing, change nothing, comment nothing, end
+   the session.
 
-2. **Validate deterministically before any judgment.** Run
-   `node <engine>/scheduler/validate-dispatch.mjs <issue-number>` (`<engine>` is
-   `.claudinite/shared/engine` in a consumer, `engine` in the canon — see Engine
-   command paths above). It checks in code that the first line is a legal task path
-   (`packs/<pack>/tasks/<task>/task.md`, optionally under a
-   `.claudinite/shared/` or `.claudinite/local/` prefix — the canon's own packs
-   are root-relative, a consumer's are under its mount), the file exists at HEAD,
-   its pack is declared, and its `task.mjs` sibling parses to a valid declaration;
-   it prints the resolved **model**, **outcome** ceiling, and the task's
-   **executionTimeout** (seconds).
-   - Invalid → comment naming what failed, remove the ready label, add
-     `needs-human`, and end the session. A forged or mangled dispatch never runs.
+   This is not caution for its own sake — a session that picks its own issue is
+   the duplicate-execution bug reached from the other direction. One scheduler run
+   files every due dispatch seconds apart, so **every** session that cannot name
+   its trigger builds the *same* list and races the others over it; the step-2
+   claim cannot save them, because they all read the list before any of them
+   claims. That is exactly how #772 was claimed twice, one second apart, on
+   2026-07-28. Stopping is cheap: the scheduler re-arms an unrun dispatch on its
+   next hourly pass and escalates it to `needs-human` if it stays unrun. Guessing
+   is not.
 
-3. **Claim the issue — read, swap, then re-read to confirm you won.** The same
+   An exit 12 in a session that *was* triggered by a label event means the trigger
+   did not reach the shell — a real defect worth a human noticing. Say so plainly
+   in your final message rather than working around it.
+
+2. **Claim the issue — read, swap, then re-read to confirm you won.** The same
    issue can still be labeled twice (a re-arm that overlapped a slow session, a
    human re-applying the label), so the claim is a lease you must verify, not a
    write you may assume. GitHub has no compare-and-swap on labels; these three
@@ -102,9 +149,9 @@ so use `engine/scheduler/`.
       session without dispatching** — do not remove `agent-running` (the winner
       is running behind it) and do not converge the issue.
 
-   Only past step 3.3 may you dispatch anything.
+   Only past step 2.3 may you dispatch anything.
 
-4. **Dispatch a subagent at the declared model.** The subagent reads the
+3. **Dispatch a subagent at the declared model.** The subagent reads the
    task file (`task.md`) and follows it exactly. The issue's **Context** section
    is **binding scope** — never re-decide or widen it: if the precondition ruled
    something out, it stays out. **Give the subagent its run bound**: tell it
@@ -112,12 +159,15 @@ so use `engine/scheduler/`.
    it, stop, comment what's done, and converge this issue to `needs-human` rather
    than pressing on."* This is best-effort — there is no platform wall-clock kill
    for this session (agent-preprocessing DESIGN §6) — so the value comes from the
-   **task declaration** printed by validate-dispatch, never from the issue body.
+   **task declaration** printed by step 1, never from the issue body.
 
-5. **Verify the outcome in code, then converge — then stop.** Determine what the
-   run did to pull requests and check it against the ceiling with
-   `verify-outcome.mjs` — a `none` task that opened a PR, or an `open-pr` task
-   that merged one, **fails the run**. Then:
+4. **Verify the outcome in code, then converge — then stop.** The declared
+   `expected_outcome` is a **ceiling, not a target**: it is the most a task may do,
+   and **"no change" is always legal** — a run that found nothing worth changing is
+   a success, never a reason to manufacture work. Determine what the run did to
+   pull requests and check it against that ceiling with `verify-outcome.mjs` — a
+   `none` task that opened a PR, or an `open-pr` task that merged one, **fails the
+   run**. Then:
    - Success within ceiling → comment the result and **close** the issue.
    - Failure (task failed, or ceiling violated) → comment naming what failed,
      remove `agent-running`, add `needs-human`. Do not close.

@@ -21,7 +21,7 @@ The deliverable is therefore **two kinds of pack**, never a single "how to work 
 - **The project's own local pack(s)** — under `.claudinite/local_packs/<pack>/` in the project's tree:
   the project-specific working style, concrete values (real commands, paths, names, metrics), and the
   project-specific rules that *don't* generalize — carried the same way any pack carries them (a check
-  in the pack's `rules`, an activity skill, prose in `RULES.md`, a `run_daily` task), not a thin doc.
+  in the pack's `rules`, an activity skill, prose in `RULES.md`, a scheduled task), not a thin doc.
   This is the project's normalized capture surface; its `CLAUDE.md` is a thin routing map to it, loaded
   through the pack system rather than `@import`.
 
@@ -145,7 +145,7 @@ need **one** general pack (name it for the project); segregate a **second** only
 earns its own bundle (the way the reference project split a general working pack from an
 extractor-automation pack). Each local pack is a real pack:
 
-- **`pack.mjs`** — `{ id, detect: null, marker: null, prose: 'RULES.md', rules: [...], skills: [...], run_daily: [...] }`.
+- **`pack.mjs`** — `{ id, detect: null, marker: null, prose: 'RULES.md', rules: [...], skills: [...] }`.
   A local pack is declared by hand, never fingerprinted or seeded (`detect`/`marker` stay null), as its
   namespaced token `local_packs/<name>` in `.claudinite-checks.json`; its id
   must be unique and may not shadow a canon pack.
@@ -158,11 +158,11 @@ extractor-automation pack). Each local pack is a real pack:
   finding objects rather than importing the engine's helpers.
 - **Skills** (`skills/<name>/SKILL.md`) — the project's activity-scoped procedures, bundled in the pack;
   a local pack may also *require* a canon skill by name.
-
-Every slot is first-class, **`run_daily`** included: the fleet plans a local pack's daily tasks by
-default, gated by the project's declaration exactly like a canon pack's — so project-specific
-scheduled work belongs in a local `run_daily` descriptor (self-contained module, pack-relative
-worker doc), not an out-of-repo routine.
+- **Scheduled tasks** (`tasks/<name>/task.mjs` + its `task.md`) — first-class like every other slot:
+  the repo's own scheduler discovers a local pack's tasks in the same scan that finds a canon pack's,
+  gated by the project's declaration exactly the same way. So project-specific scheduled work belongs
+  in a local task declaration (a self-contained module honoring the task contract, with its
+  co-located worker doc), not an out-of-repo routine and not a cron of its own.
 
 The project's `CLAUDE.md` becomes a thin **routing map** to its local packs (and its genuine design
 docs) — it does **not** `@import` the pack prose; the pack system injects the active local packs'

@@ -54,7 +54,7 @@ const rule = {
       // A consumer's own local-pack check layer is the same case: a rule module or
       // a bundled skill's checks.mjs under .claudinite/local/packs/ (or the
       // pre-rename .claudinite/local_packs/) spells markers as detection patterns
-      // too (its run_daily scripts are NOT exempt — they are ordinary code). This
+      // too (its tasks/ scripts are NOT exempt — they are ordinary code). This
       // mirrors the packs/ skip for a project's own packs.
       if (
         /^packs\//.test(file) ||

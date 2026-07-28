@@ -12,7 +12,6 @@ import catalogCompleteness from './catalog-completeness.mjs';
 import claudiniteIsolation from './claudinite-isolation.mjs';
 import schedulerWorkflowShape from './scheduler-workflow-shape.mjs';
 import taskDeclarationShape from './task-declaration-shape.mjs';
-import baselining from './run_daily/baselining.mjs';
 
 // The baseline pack: working discipline, the task lifecycle, and the core
 // checks. Declared explicitly like every other pack — no pack is active by
@@ -59,8 +58,9 @@ export default {
   // seeds everywhere). The directory listing IS the manifest; when one stops
   // being a baseline activity, move its directory to the pack whose projects
   // need it (#385 moved the git/GitHub and Claudinite-lifecycle skills out).
-  // The baseline daily task every member runs: baselining (re-run the idempotent
-  // bootstrap + check-alignment). Being in basics — declared everywhere — makes it
-  // fleet-universal without a fleet-core category.
-  run_daily: [baselining],
+  //
+  // The baseline scheduled task every repo runs — baselining, the per-repo
+  // self-refresh — lives in this pack's `tasks/baselining/`, discovered by the
+  // scheduler's filesystem scan (engine/scheduler/discover.mjs), not declared
+  // here. Being in basics — declared everywhere — makes it universal.
 };

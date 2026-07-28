@@ -6,10 +6,11 @@
 // enforce. An invalid dispatch is rejected (the executor de-labels it and
 // converges it to needs-human), so a forged or mangled issue never runs.
 //
-// Pure over injected capabilities so it unit-tests without a repo or GitHub. The
-// thin `node validate-dispatch.mjs <n>` CLI the executor invokes (fetch the
-// issue, wire `exists`/`isPackDeclared`/`loadTask` to the checkout) lands with
-// the executor shell.
+// Pure over injected capabilities so it unit-tests without a repo or GitHub. It
+// is NOT a CLI — the executor shell beside it, `resolve-dispatch.mjs`, is what
+// drives it in production: that shell takes the issue body out of the label
+// event's payload on disk and wires `exists`/`isPackDeclared`/`loadTask` to the
+// checkout, so validating a dispatch costs no GitHub call at all.
 
 import { validateTaskDeclaration } from './task-contract.mjs';
 import { resolveModel } from './model-map.mjs';

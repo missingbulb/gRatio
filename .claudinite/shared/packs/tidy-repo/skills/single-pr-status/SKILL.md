@@ -1,6 +1,6 @@
 ---
 name: single-pr-status
-description: Assess one open pull request's landed status — keep-open, or closeable (merged, already-in-main, superseded, stale) — read-only. Use when triaging whether a single PR should stay open, judging by its commits and diff not its title (e.g. the tidy-repo repo-tidy task hands you PRs to assess).
+description: Assess one open pull request's landed status — keep-open, or closeable (merged, already-in-main, superseded, stale) — read-only. Use when triaging whether a single PR should stay open, judging by its commits and diff not its title (e.g. the tidy-repo pack's tidy-prs task hands you PRs to assess).
 ---
 
 # Single-PR status

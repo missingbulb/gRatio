@@ -19,18 +19,29 @@ export default {
   // too (the old weekly-full crutch retires — a log ages out on wall time, not on
   // the repo changing, DESIGN §6):
   //   (a) a substantive merge — a fresh capture now sits on the logs branch;
-  //   (b) the logs branch exists AND retention is configured — there may be aged
-  //       logs to give a final hindsight pass and prune, regardless of activity.
+  //   (b) a log on the branch is ACTUALLY past retention — there is aged material
+  //       to give a final hindsight pass and prune, regardless of activity.
+  //
+  // (b) tests the age, not just "a branch exists and retention is configured":
+  // that pair is true on every capturing repo every day, which dispatched an opus
+  // agent daily to find nothing prunable. The prune's trigger is the same fact the
+  // prune acts on — the oldest log being older than retention.
   precondition(signals) {
     const substantive = signals.commits?.substantiveChange === true;
     const logs = signals.conversationLogs ?? {};
-    const canPrune = logs.present === true && typeof logs.retentionDays === 'number';
+    const retention = logs.retentionDays;
+    const oldest = logs.oldestLogAgeDays;
+    const configured = logs.present === true && typeof retention === 'number';
+    const aged = configured && typeof oldest === 'number' && oldest > retention;
 
     if (substantive) {
       return { run: true, reason: 'substantive merge — extract any freshly captured conversation logs (+ retention prune)' };
     }
-    if (canPrune) {
-      return { run: true, reason: `logs branch present, retention ${logs.retentionDays}d — run the age-based retention prune` };
+    if (aged) {
+      return { run: true, reason: `oldest log ${oldest.toFixed(1)}d old vs retention ${retention}d — run the age-based retention prune` };
+    }
+    if (configured) {
+      return { run: false, reason: `no substantive merge and no log older than retention ${retention}d — nothing to prune` };
     }
     return { run: false, reason: logs.present ? 'no substantive merge and retention unset — nothing to prune' : 'no fresh captures and no logs branch' };
   },

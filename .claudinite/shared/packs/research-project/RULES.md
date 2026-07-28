@@ -32,7 +32,7 @@ optional polish. Follow it for every substantive algorithmic change.
    Render the current behaviour and *look* at it before theorising. If a
    decision hinges on a measurable fact (a colour/intensity split, a threshold,
    an over-reach, a distribution), write a **throwaway diagnostic and measure
-   it** — do not guess. Cheap, disposable diagnostics beat argument.
+   it** — do not guess.
 2. **Prototype in the scratchpad.** Build the change as a standalone script
    first. Do **not** touch tracked code yet.
 3. **Show a comparison in the chat.** Surface a rendered **[ original | result ]**
@@ -100,8 +100,7 @@ and pushed so it can be reviewed or resumed from a fresh session.
 
 - Projects like this begin with a **small learning set of similarly-formatted
   inputs** (same modality, same acquisition regime, same annotation convention).
-  That is a feature — it lets you iterate fast and look closely — and a hazard:
-  it is small enough to overfit (§4).
+  That is a hazard as well as a feature: it is small enough to overfit (§4).
 - **State the input format explicitly** (dimensions, modality, contrast
   convention, expected content per input) so a mismatched new input is diagnosed
   fast. Keep a one-line-per-input table.
@@ -118,9 +117,8 @@ and pushed so it can be reviewed or resumed from a fresh session.
 
 ## 4. Do not overfit the learning set
 
-This is the discipline that keeps a small-set project honest. These are **hard
-constraints** — a change that violates one gets reverted even if it improves a
-metric.
+These are **hard constraints** — a change that violates one gets reverted even
+if it improves a metric.
 
 - **No single-input special-casing.** Every rule must generalise across the set.
   If a fix only helps one input, say so and either generalise it or drop it.
@@ -132,18 +130,16 @@ metric.
 - **Prefer scale-free rules over pixel/absolute constants.** Where a constant is
   unavoidably tied to the current data's scale/resolution, **isolate and label
   it** as scale-dependent so it is the first thing revisited on new-scale data.
-- **Name the hard constraint the task cannot trade away**, and tune to it first.
-  Some projects have a metric that is non-negotiable (e.g. a failure mode whose
-  cost dominates all others); identify yours, hold it at its required level
-  *first*, and optimise the softer metrics only underneath it. Make it explicit
-  so a later tuning pass doesn't quietly trade it away.
+- **Name the hard constraint the task cannot trade away**, and tune to it first —
+  some projects have a metric whose cost dominates all others; hold it at its
+  required level before optimising the softer metrics underneath it. Make it
+  explicit so a later tuning pass doesn't quietly trade it away.
 - **Keep a registry of domain assumptions, each with a failure mode.** Choices
   that encode a prior about the *subject or the instrument* (not pure
   processing) are named, located in the code with an inline tag, and given an
   explicit "how it fails on mismatched data" note. When a new input looks wrong,
-  the first diagnostic is *"which assumption did this input break?"* — and that is
-  only fast if the assumptions are written down. Flag the thinly-supported ones
-  (e.g. calibrated on a single example) honestly.
+  the first diagnostic is *"which assumption did this input break?"*. Flag the
+  thinly-supported ones (e.g. calibrated on a single example) honestly.
 - **Guard the wins with regression tests.** An input the owner has blessed as
   "very good" must not silently regress when you tune for another. Pin its score.
 
@@ -152,9 +148,8 @@ metric.
 ## 5. Repeatable improvement iterations — the numbered notes, and *definition of done*
 
 Each accepted change is recorded as a **numbered iteration note** (pick a short
-tag and stick to it, e.g. `R1, R2, …`) in a running method-narrative doc. The
-point is that **the next session does not re-derive what this one already
-learned.**
+tag and stick to it, e.g. `R1, R2, …`) in a running method-narrative doc, so
+**the next session does not re-derive what this one already learned.**
 
 An iteration note captures:
 - **What was wrong** (the observed failure, ideally with the diagnostic that
@@ -162,9 +157,8 @@ An iteration note captures:
 - **What changed** (the rule/parameter and why, in scale-free terms where
   possible).
 - **The metric delta** — before/after, per input, on the real scoring harness.
-- **What you tried and rejected, and why.** Rejected approaches are as valuable
-  as accepted ones; they stop the next session (or the next model) from walking
-  back into the same dead end.
+- **What you tried and rejected, and why** — this is what stops the next session
+  (or the next model) from walking back into the same dead end.
 
 ### Definition of done for an accepted change
 - **Source updated — never the generated artifacts.** (Regenerate them.)
@@ -202,7 +196,6 @@ When a paper, tool, or reference method matters to the project:
   parameters, the definitions and formulae, calibration details, and **sanity-check
   values** you can validate your own outputs against.
 - **Explicitly record where your approach diverges from the reference and why.**
-  The divergence is often the whole point of the project; make it legible.
 - **State what you deliberately omitted** (material not relevant to the
   algorithm — e.g. procedural/experimental setup detail, incidental statistics,
   acknowledgements) and that you cross-checked against the full text — so a later
@@ -242,8 +235,8 @@ When a paper, tool, or reference method matters to the project:
     annotation) → validates the *summary quantity* the project reports, and
     nothing finer.
   Wiring an aggregate-only dataset into the detailed-overlap harness would force
-  you to **fabricate annotations**, which violates §2 ("ground truth is annotated,
-  never invented"). Keep a separate, mask-free validation path for those sets.
+  you to **fabricate annotations**, which violates §2. Keep a separate,
+  mask-free validation path for those sets.
 - **External data is rarely drop-in.** Expect a scale/regime gap (§3) and
   *measure* it with the appropriate tier rather than assuming the corpus is
   covered.
@@ -255,8 +248,7 @@ When a paper, tool, or reference method matters to the project:
 - **A fresh container has nothing installed.** Assume dependencies must be
   installed each session, and keep the dependency set **small and lightweight** —
   favour a compact set of core libraries over heavy frameworks (e.g. large ML
-  stacks) that are slow to install and awkward to run anywhere. Prefer a
-  lightweight solution that installs in seconds and runs anywhere.
+  stacks) that are slow to install and awkward to run anywhere.
 - **When a heavy or learned approach is genuinely the right tool, treat it as a
   gated, isolated route** (documented, opt-in, scoped to the cases that need it)
   rather than a new baseline dependency — and prove the lightweight route is
@@ -275,18 +267,16 @@ first-class experiments:
 - **Take the suggestion seriously even when the project has declared a direction
   "exhausted."** A suggestion may belong to a *different family* than everything
   tried so far, which is exactly when it can break a wall the previous family
-  couldn't. "We already tried X" rarely covers a genuinely different approach.
+  couldn't.
 - **Evaluate it the same way as any change**: diagnose the wall it targets, build
   the evidence that the wall is real (or isn't), prototype, and show a comparison.
 - **Beat the naive baseline, or drop it.** A more sophisticated or signal-driven
   method is only worth adopting if it *measurably* out-scores the simple/uniform
   baseline — sophistication is not accuracy when the guiding signal is noisy or
-  penetrates the structure unevenly, and a "smarter" local correction can lose to a
-  plain uniform one. Keep the roles of a signal distinct, too: a feature that is
-  excellent for *visualising or validating* a structure can be wrong for *defining*
-  it — gating the output directly on such a signal can erode the very structure you
-  are measuring. Always check the fancier route against the naive one before keeping
-  it.
+  penetrates the structure unevenly. Keep the roles of a signal distinct, too: a
+  feature that is excellent for *visualising or validating* a structure can be
+  wrong for *defining* it — gating the output directly on such a signal can erode
+  the very structure you are measuring.
 - **Document the outcome fully**, including the routes that hit a wall and *why*
   (name the specific trade-off or signal that defeated them). If the idea needs
   capabilities the environment won't allow (§10), record the concrete route to
@@ -300,12 +290,10 @@ first-class experiments:
 
 When a sub-step of the algorithm plausibly applies to **another problem** beyond
 the current task, record it as a **short pointer in a dedicated side document** —
-a direction worth attention, not a validated claim, and it need not be certain to
-be worth noting. **Keep this speculation out of the algorithm itself**: code and
-inline comments stay strictly about the task at hand and its stated assumptions.
-This keeps the core legible and honest about what it is *for* while not losing
-genuinely useful observations that surface while building it. Add an entry
-whenever you build or substantially change a sub-step.
+a direction worth attention, not a validated claim. **Keep this speculation out
+of the algorithm itself**: code and inline comments stay strictly about the task
+at hand and its stated assumptions. Add an entry whenever you build or
+substantially change a sub-step.
 
 ---
 
@@ -327,12 +315,11 @@ The owner works across many sessions and machines. Every session should end in a
   durably — don't just do it this once.** A correction to *how* work is done (how
   results are shown, what command to run, a naming/format convention, a step to
   always take or skip) is a standing preference, not a one-off. Fold it into the
-  warm-up doc — or a reference doc linked from it — so the next session reaches
-  the same state without being told again. Prefer editing the doc that already
-  owns that topic over adding a stray note; if the change contradicts what's
-  written, replace it and say what changed. The test: *could a fresh session, with
-  only the warm-up doc, reproduce this new behaviour?* If not, it isn't captured
-  yet.
+  warm-up doc — or a reference doc linked from it. Prefer editing the doc that
+  already owns that topic over adding a stray note; if the change contradicts
+  what's written, replace it and say what changed. The test: *could a fresh
+  session, with only the warm-up doc, reproduce this new behaviour?* If not, it
+  isn't captured yet.
 - Follow the repo's **branch/commit/PR conventions**: develop on the named
   branch, commit with clear messages, push; don't open a PR unless asked.
 
@@ -340,10 +327,10 @@ The owner works across many sessions and machines. Every session should end in a
 
 ## 14. Reviving a prior session to **enhance this document** (not to continue the research)
 
-This document is meant to keep improving as the owner works. Some of the owner's
-process preferences live only in the **dialogue of earlier Claude Code (web)
-sessions**, not in any committed file. If the owner revives such a session and
-points it at this playbook, here is the instruction for that revived session:
+Some of the owner's process preferences live only in the **dialogue of earlier
+Claude Code (web) sessions**, not in any committed file. If the owner revives
+such a session and points it at this playbook, here is the instruction for that
+revived session:
 
 > **Your job in this revived session is to mine our conversation for *process and
 > working-style preferences*, and fold them into this playbook — NOT to continue

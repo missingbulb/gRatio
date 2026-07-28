@@ -1,18 +1,18 @@
-import repoTidy from './run_daily/repo-tidy.mjs';
-
-// The repo tidy-up, as a composable pack: the PR/branch/issue sweep the fleet routine
-// runs, contributed the same way any pack contributes checks and skills. Declaring
-// tidy-repo adds its run_daily task to that repo's plan; removing it is a durable
-// opt-out (baselining never re-adds it — see the tidy-repo-seed migration).
+// The repo tidy-up, as a composable pack: the PR/branch/issue sweep the repo's own
+// scheduler runs, contributed the same way any pack contributes checks and skills.
+// Declaring tidy-repo puts its scheduled task on that repo's schedule; removing it
+// is a durable opt-out (baselining never re-adds it — see the tidy-repo-seed
+// migration).
 //
 // A declared pack (no detect fingerprint): --init seeds it into every new repo's
 // declaration, and the one-time tidy-repo-seed migration seeds the existing fleet.
-// It carries no conformance checks — its work is the run_daily task, not checks.
+// It carries no conformance checks — its work is the scheduled task, not checks.
 //
-// One task, repo-tidy: its worker assesses branches and PRs read-only, acts on issues,
-// then reconciles the standing tracker — each per-object step delegated to a single-
-// object skill. It replaced the four separate dimension/report tasks (and their
-// per-repo ordering barrier) once the skills owned the actual per-object method.
+// One task per dimension — tidy-issues (daily, acts), tidy-prs and tidy-branches
+// (weekly, assess-only) — each delegating its per-object verdict to a single-object
+// skill and reconciling its OWN standing tracker. Three narrow tasks, not one wide
+// one: each has its own trigger and scope, none depends on another's result, so
+// there is no ordering barrier and a dimension with nothing to do stays silent.
 export default {
   id: 'tidy-repo',
   detect: null,
@@ -20,8 +20,9 @@ export default {
   seededByDefault: true,
   prose: 'RULES.md',
   rules: [],
-  run_daily: [repoTidy],
-  // The single-object worker skills the repo-tidy worker applies live under this
-  // pack's own skills/ and mount wherever
-  // tidy-repo is declared.
+  // The pack's scheduled tasks live in this pack's own `tasks/<id>/`, discovered by
+  // the scheduler's filesystem scan (engine/scheduler/discover.mjs), not declared here.
+  //
+  // The single-object worker skills those workers apply live under this pack's own
+  // skills/ and mount wherever tidy-repo is declared.
 };
