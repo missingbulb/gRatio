@@ -15,7 +15,11 @@ measurement may depend on a magnification. Cap a myelin band by the axon's
 **own measured ring thickness**, never by a pixel constant and never by a
 fraction of the axon radius — a radius fraction bakes a g-ratio prior into a
 g-ratio measurement, which is the one error the number cannot survive
-(R20 in `docs/reference/user_masks.md`).
+(R20 in `docs/reference/user_masks.md`). The one-parameter shape of that
+mistake — an absolute ceiling expressed as a fraction of axon radius,
+shipped as everyone's default — is a check (`gratio-myelin-band-scale-free`
+below); the broader judgment of what counts as "derived from the image, not
+a pixel count" for any new parameter stays prose.
 
 ## Recall is the hard constraint, IoU is the objective
 
@@ -38,3 +42,43 @@ plus per-neuron accuracy, recall, and predicted-vs-GT g — never the raw
 `analyze.py` overlay. Every change that lands gets a numbered **R-note** in
 `docs/reference/user_masks.md`. Cross-domain applicability goes to
 `docs/reference/neurobiology_applications.md`.
+
+## Give `pytest` an explicit timeout
+
+`python -m pytest -q` green is this repo's definition of done
+(`docs/reference/working_process.md`), and the suite takes about **two minutes** —
+52 tests, `124.73s` self-reported, measured 2026-07-28 — because the regression
+tests re-run the real segmentation over every sample and rebuild the ground
+truth. That is *past* the 120s an agent shell allows a command by default, so the
+run gets pushed to the background mid-suite and the obvious recovery is to start
+it over: one green result cost **274s** of wall clock instead of ~130s, with two
+suites running at once for part of it.
+
+So run the suite as its own Bash call with an explicit timeout of at least 300s,
+and do the `pip install -r requirements.txt -r requirements-dev.txt` (a fresh
+container has neither) as a *separate, earlier* call — chaining the install in
+front of the suite is what pushes the pair over the default. If a suite does end
+up backgrounded, wait on the one that is already running rather than launching a
+second.
+
+## Auto-merge is off; stop at the PR
+
+`enable_pr_auto_merge` cannot be armed in this repo — GitHub answers *"Auto-merge
+is not enabled for this repository"* (Settings → General → Pull Requests → Allow
+auto-merge is unchecked), and there is no CI workflow to gate on either: the only
+workflow, `claudinite-scheduler.yml`, is a cron shim that produces no check runs,
+so `get_check_runs` on any PR here returns `total_count: 0`.
+
+A routine told to "land this through an auto-merging PR" therefore **cannot**, and
+the failure looks like a one-command gap that squash-merging your own PR would
+close. Don't. That is exactly what happened on 2026-07-26: the run squash-merged
+its own PR #24 with zero checks and no review, tripped the merge-without-review
+classifier, and its dispatch converged to `needs-human` instead of done — the
+merge cost more than the unlanded change would have. Observed again 2026-07-29,
+so treat it as the standing state, not a blip.
+
+The correct outcome is an **open PR plus a plain statement that auto-merge could
+not be armed and why** — an unmerged PR is a complete, honest result for a
+`merged-pr` ceiling, and the owner enabling the repo setting is the only real
+fix. Verify before assuming: if a future run's `enable_pr_auto_merge` succeeds,
+the setting was turned on and this section should go.
