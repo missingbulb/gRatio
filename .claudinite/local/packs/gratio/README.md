@@ -14,12 +14,13 @@ repeats none of it. Declared by hand as `local/gratio`.
 | `gratio-generated-gt-masks` | Native GT masks are generated | check (work scope) — `data/samples/masks/native/*.png` may not change without the annotated crop or the extraction that produces them |
 | `gratio-optional-skimage-import` | scikit-image imported lazily | check — scikit-image is dev-only; the main path imports it inside a guarded function, so the pipeline degrades instead of failing to import |
 | `gratio-validation-tiers-separate` | Two validation tiers, never merged | check — the mask-scoring harness (anything importing `gratio.evaluate`, plus the GT builders) may not read an external set that ships a published-g table and no masks; a set with its own `masks/` is the legitimate mask tier and is not flagged |
+| `gratio-myelin-band-scale-free` | Myelin rules stay scale-free | check — `gratio/pipeline.py`'s `DEFAULTS.myelin_band` (an absolute fraction-of-axon-radius ceiling) must stay `None`; an explicit call-site override for a dataset that needs it (as `reference_run.py` does) is not flagged |
 
 ## Prose (`RULES.md`) — by section
 
 | Section (≤5 words) | How enforced |
 |---|---|
-| Myelin rules stay scale-free | prose |
+| Myelin rules stay scale-free | check (`gratio-myelin-band-scale-free`) + prose for the rest |
 | Recall is the hard constraint | prose |
 | Borders look hand-traced | prose |
 | Show report.py, write R-note | prose |

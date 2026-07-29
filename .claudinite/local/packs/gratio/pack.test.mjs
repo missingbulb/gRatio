@@ -12,6 +12,7 @@ import noSampleSpecialCasing from './no-sample-special-casing.mjs';
 import generatedGtMasks from './generated-gt-masks.mjs';
 import optionalSkimageImport from './optional-skimage-import.mjs';
 import validationTiersSeparate from './validation-tiers-separate.mjs';
+import myelinBandScaleFree from './myelin-band-scale-free.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
@@ -143,9 +144,41 @@ test('validation-tiers-separate allows an external set that ships its own masks'
   })), []);
 });
 
+test('myelin-band-scale-free fires when DEFAULTS.myelin_band is a number', () => {
+  const found = myelinBandScaleFree.run(ctxOf({
+    'gratio/pipeline.py': 'DEFAULTS = dict(\n'
+      + '    touch_dilate=5,\n'
+      + '    myelin_band=0.7,         # fraction of axon radius\n'
+      + '    smooth_frac=0.15,\n'
+      + ')\n',
+  }));
+  assert.equal(found.length, 1);
+  assert.equal(found[0].line, 3);
+});
+
+test('myelin-band-scale-free tolerates the shipped None default', () => {
+  assert.deepEqual(myelinBandScaleFree.run(ctxOf({
+    'gratio/pipeline.py': 'DEFAULTS = dict(\n'
+      + '    touch_dilate=5,\n'
+      + '    myelin_band=None,        # fraction of axon radius; None = off\n'
+      + '    smooth_frac=0.15,\n'
+      + ')\n',
+  })), []);
+});
+
+test('myelin-band-scale-free ignores a call-site override outside DEFAULTS', () => {
+  assert.deepEqual(myelinBandScaleFree.run(ctxOf({
+    'gratio/pipeline.py': 'DEFAULTS = dict(\n'
+      + '    myelin_band=None,\n'
+      + ')\n',
+    'reference_run.py': 'segment(img, myelin_band=0.7, bright_margin=-40)\n',
+  })), []);
+});
+
 test('the repo as it stands is clean under every rule', () => {
   const ctx = realCtx();
   assert.deepEqual(noSampleSpecialCasing.run(ctx), []);
   assert.deepEqual(optionalSkimageImport.run(ctx), []);
   assert.deepEqual(validationTiersSeparate.run(ctx), []);
+  assert.deepEqual(myelinBandScaleFree.run(ctx), []);
 });
