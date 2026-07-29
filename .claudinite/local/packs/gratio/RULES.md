@@ -15,7 +15,11 @@ measurement may depend on a magnification. Cap a myelin band by the axon's
 **own measured ring thickness**, never by a pixel constant and never by a
 fraction of the axon radius — a radius fraction bakes a g-ratio prior into a
 g-ratio measurement, which is the one error the number cannot survive
-(R20 in `docs/reference/user_masks.md`).
+(R20 in `docs/reference/user_masks.md`). The one-parameter shape of that
+mistake — an absolute ceiling expressed as a fraction of axon radius,
+shipped as everyone's default — is a check (`gratio-myelin-band-scale-free`
+below); the broader judgment of what counts as "derived from the image, not
+a pixel count" for any new parameter stays prose.
 
 ## Recall is the hard constraint, IoU is the objective
 
