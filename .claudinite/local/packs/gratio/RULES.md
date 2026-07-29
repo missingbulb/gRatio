@@ -40,3 +40,21 @@ plus per-neuron accuracy, recall, and predicted-vs-GT g — never the raw
 what was **rejected**; that rejection log is what stops the next session
 re-walking a dead end. Cross-domain applicability goes to
 `docs/reference/neurobiology_applications.md`, never into the algorithm body.
+
+## Give `pytest` an explicit timeout
+
+`python -m pytest -q` green is this repo's definition of done
+(`docs/reference/working_process.md`), and the suite takes about **two minutes** —
+52 tests, `124.73s` self-reported, measured 2026-07-28 — because the regression
+tests re-run the real segmentation over every sample and rebuild the ground
+truth. That is *past* the 120s an agent shell allows a command by default, so the
+run gets pushed to the background mid-suite and the obvious recovery is to start
+it over: one green result cost **274s** of wall clock instead of ~130s, with two
+suites running at once for part of it.
+
+So run the suite as its own Bash call with an explicit timeout of at least 300s,
+and do the `pip install -r requirements.txt -r requirements-dev.txt` (a fresh
+container has neither) as a *separate, earlier* call — chaining the install in
+front of the suite is what pushes the pair over the default. If a suite does end
+up backgrounded, wait on the one that is already running rather than launching a
+second.

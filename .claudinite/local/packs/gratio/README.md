@@ -23,6 +23,7 @@ repeats none of it. Declared by hand as `local/gratio`.
 | Recall is the hard constraint | prose |
 | Borders look hand-traced | prose |
 | Show report.py, write R-note | prose |
+| Give pytest an explicit timeout | prose — the suite runs ~2 min, past the 120s default |
 
 ## Fixtures
 
