@@ -36,7 +36,5 @@ strong even when it scores well.
 Present results with `python report.py` — the `[original | result | GT]` panels
 plus per-neuron accuracy, recall, and predicted-vs-GT g — never the raw
 `analyze.py` overlay. Every change that lands gets a numbered **R-note** in
-`docs/reference/user_masks.md` recording what was wrong, what was tried, and
-what was **rejected**; that rejection log is what stops the next session
-re-walking a dead end. Cross-domain applicability goes to
-`docs/reference/neurobiology_applications.md`, never into the algorithm body.
+`docs/reference/user_masks.md`. Cross-domain applicability goes to
+`docs/reference/neurobiology_applications.md`.
