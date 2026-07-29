@@ -24,6 +24,7 @@ repeats none of it. Declared by hand as `local/gratio`.
 | Borders look hand-traced | prose |
 | Show report.py, write R-note | prose |
 | Give pytest an explicit timeout | prose — the suite runs ~2 min, past the 120s default |
+| Auto-merge is off; stop at PR | prose — `enable_pr_auto_merge` fails here; never self-merge to compensate |
 
 ## Fixtures
 
