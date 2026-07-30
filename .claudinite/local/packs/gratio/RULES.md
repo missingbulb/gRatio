@@ -4,7 +4,7 @@ This project's own pack: what is specific to measuring a myelin g-ratio from EM
 cross-sections here, and to nothing the canon packs already home. The working
 loop (show every step, ground truth annotated never invented, numbered
 iterations, spikes vs. main path) is the declared `research-project` pack's — it
-is not repeated here. Four rules of this pack are deterministic checks
+is not repeated here. Six rules of this pack are deterministic checks
 (`README.md` lists them); what follows is the judgment that has no static
 signature.
 
@@ -26,7 +26,13 @@ a pixel count" for any new parameter stays prose.
 A missed axon does not merely lose one fibre: its myelin merges into a
 neighbour's and corrupts *that* fibre's g. Tune for detection recall 1.0 with no
 false positives first; only then maximise IoU. A change that trades a detection
-for boundary accuracy is a regression however good the IoU delta looks.
+for boundary accuracy is a regression however good the IoU delta looks — which
+of two tunings made that trade is a judgment about a run, and stays prose. The
+*guard* that catches the trade is not: the suite must keep asserting zero false
+negatives and zero false positives over every sample, and
+`gratio-detection-recall-pinned` fails if either assertion is deleted or
+weakened to a threshold (a lost axon would otherwise report as an IoU
+improvement).
 
 ## Borders look hand-traced
 

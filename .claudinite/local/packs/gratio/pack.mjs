@@ -3,6 +3,7 @@ import generatedGtMasks from './generated-gt-masks.mjs';
 import optionalSkimageImport from './optional-skimage-import.mjs';
 import validationTiersSeparate from './validation-tiers-separate.mjs';
 import myelinBandScaleFree from './myelin-band-scale-free.mjs';
+import detectionRecallPinned from './detection-recall-pinned.mjs';
 
 // gRatio's own pack: the measurement invariants and repo mechanics that are
 // specific to this project and to no facet the canon homes. The project *class*
@@ -19,7 +20,7 @@ export default {
   detect: null,
   marker: null,
   prose: 'RULES.md',
-  rules: [noSampleSpecialCasing, generatedGtMasks, optionalSkimageImport, validationTiersSeparate, myelinBandScaleFree],
+  rules: [noSampleSpecialCasing, generatedGtMasks, optionalSkimageImport, validationTiersSeparate, myelinBandScaleFree, detectionRecallPinned],
   skills: [],
   run_daily: [],
 };

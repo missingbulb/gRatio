@@ -15,13 +15,14 @@ repeats none of it. Declared by hand as `local/gratio`.
 | `gratio-optional-skimage-import` | scikit-image imported lazily | check — scikit-image is dev-only; the main path imports it inside a guarded function, so the pipeline degrades instead of failing to import |
 | `gratio-validation-tiers-separate` | Two validation tiers, never merged | check — the mask-scoring harness (anything importing `gratio.evaluate`, plus the GT builders) may not read an external set that ships a published-g table and no masks; a set with its own `masks/` is the legitimate mask tier and is not flagged |
 | `gratio-myelin-band-scale-free` | Myelin rules stay scale-free | check — `gratio/pipeline.py`'s `DEFAULTS.myelin_band` (an absolute fraction-of-axon-radius ceiling) must stay `None`; an explicit call-site override for a dataset that needs it (as `reference_run.py` does) is not flagged |
+| `gratio-detection-recall-pinned` | Recall is the hard constraint | check — some assertion in `tests/` must still pin detection false negatives to zero, and some assertion false positives to zero; any phrasing (`fn == 0`, `recall == 1.0`, …) in any test file satisfies it, a docstring describing the guarantee does not |
 
 ## Prose (`RULES.md`) — by section
 
 | Section (≤5 words) | How enforced |
 |---|---|
 | Myelin rules stay scale-free | check (`gratio-myelin-band-scale-free`) + prose for the rest |
-| Recall is the hard constraint | prose |
+| Recall is the hard constraint | check (`gratio-detection-recall-pinned`) for the guard + prose for the tuning order |
 | Borders look hand-traced | prose |
 | Show report.py, write R-note | prose |
 | Give pytest an explicit timeout | prose — the suite runs ~2 min, past the 120s default |

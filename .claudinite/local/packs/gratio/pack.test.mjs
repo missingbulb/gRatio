@@ -13,6 +13,7 @@ import generatedGtMasks from './generated-gt-masks.mjs';
 import optionalSkimageImport from './optional-skimage-import.mjs';
 import validationTiersSeparate from './validation-tiers-separate.mjs';
 import myelinBandScaleFree from './myelin-band-scale-free.mjs';
+import detectionRecallPinned from './detection-recall-pinned.mjs';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
@@ -175,10 +176,79 @@ test('myelin-band-scale-free ignores a call-site override outside DEFAULTS', () 
   })), []);
 });
 
+// The suite as it stands: both detection guards asserted, over every sample.
+const PINNED_SUITE = {
+  'gratio/evaluate.py': 'def evaluate(pred, gt):\n    return {"detection": {}}\n',
+  'tests/test_evaluate.py': 'def test_every_axon_found(evaluated):\n'
+    + '    for s in SAMPLES:\n        assert evaluated[s][1]["detection"]["fn"] == 0\n\n'
+    + 'def test_no_spurious_axons(evaluated):\n'
+    + '    fp = sum(evaluated[s][1]["detection"]["fp"] for s in SAMPLES)\n    assert fp == 0\n',
+};
+
+test('detection-recall-pinned fires when the zero-false-negative guard is deleted', () => {
+  const found = detectionRecallPinned.run(ctxOf({
+    ...PINNED_SUITE,
+    'tests/test_evaluate.py': 'def test_no_spurious_axons(evaluated):\n'
+      + '    fp = sum(evaluated[s][1]["detection"]["fp"] for s in SAMPLES)\n    assert fp == 0\n',
+  }));
+  assert.equal(found.length, 1);
+  assert.match(found[0].what, /false negatives/);
+});
+
+test('detection-recall-pinned fires when a guard is weakened to a threshold', () => {
+  const found = detectionRecallPinned.run(ctxOf({
+    ...PINNED_SUITE,
+    'tests/test_evaluate.py': 'def test_detection(evaluated):\n'
+      + '    for s in SAMPLES:\n        assert evaluated[s][1]["detection"]["recall"] >= 0.9\n'
+      + '        assert evaluated[s][1]["detection"]["fp"] == 0\n',
+  }));
+  assert.equal(found.length, 1);
+  assert.match(found[0].what, /false negatives/);
+});
+
+test('detection-recall-pinned does not accept a docstring in place of an assertion', () => {
+  const found = detectionRecallPinned.run(ctxOf({
+    ...PINNED_SUITE,
+    'tests/test_evaluate.py': 'def test_every_axon_found(evaluated):\n'
+      + '    """Recall must be perfect: det["fn"] == 0 for every sample."""\n'
+      + '    assert evaluated["sample_02"][1]["detection"]["fp"] == 0\n',
+  }));
+  assert.equal(found.length, 1);
+});
+
+test('detection-recall-pinned reports both guards when neither survives', () => {
+  const found = detectionRecallPinned.run(ctxOf({
+    ...PINNED_SUITE,
+    'tests/test_evaluate.py': 'def test_iou(evaluated):\n    assert evaluated["sample_02"][1]["axon"]["iou"] > 0.9\n',
+  }));
+  assert.equal(found.length, 2);
+});
+
+test('detection-recall-pinned is quiet on a suite that pins both guards', () => {
+  assert.deepEqual(detectionRecallPinned.run(ctxOf(PINNED_SUITE)), []);
+});
+
+test('detection-recall-pinned accepts an equivalent recall/precision phrasing', () => {
+  assert.deepEqual(detectionRecallPinned.run(ctxOf({
+    ...PINNED_SUITE,
+    'tests/test_detect.py': 'def test_detection(evaluated):\n'
+      + '    for s in SAMPLES:\n        assert evaluated[s][1]["detection"]["recall"] == 1.0\n'
+      + '        assert evaluated[s][1]["detection"]["precision"] == 1.0\n',
+    'tests/test_evaluate.py': 'def test_iou(evaluated):\n    assert 1\n',
+  })), []);
+});
+
+test('detection-recall-pinned stays out of a repo with no evaluator', () => {
+  assert.deepEqual(detectionRecallPinned.run(ctxOf({
+    'tests/test_synthetic.py': 'def test_ring():\n    assert g < 1\n',
+  })), []);
+});
+
 test('the repo as it stands is clean under every rule', () => {
   const ctx = realCtx();
   assert.deepEqual(noSampleSpecialCasing.run(ctx), []);
   assert.deepEqual(optionalSkimageImport.run(ctx), []);
   assert.deepEqual(validationTiersSeparate.run(ctx), []);
   assert.deepEqual(myelinBandScaleFree.run(ctx), []);
+  assert.deepEqual(detectionRecallPinned.run(ctx), []);
 });
