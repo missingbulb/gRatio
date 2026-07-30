@@ -84,3 +84,31 @@ not be armed and why** — an unmerged PR is a complete, honest result for a
 `merged-pr` ceiling, and the owner enabling the repo setting is the only real
 fix. Verify before assuming: if a future run's `enable_pr_auto_merge` succeeds,
 the setting was turned on and this section should go.
+
+There is also no repo-*settings* write tool on this GitHub MCP surface — only
+per-PR `enable_pr_auto_merge`, which itself presupposes the repository setting is
+already on. An instruction like "enable auto-merge in repo settings" is therefore
+not actionable by any session here beyond naming the exact path
+(Settings → General → Pull Requests → Allow auto-merge); don't burn a `ToolSearch`
+pass hunting for a repo-settings tool that doesn't exist (four queries, ~24s,
+2026-07-29 on issue #37).
+
+## On `LGTM`: read the recipe, skip the main sync
+
+The `merge-to-main` skill is not mounted in this repo: `.claudinite-checks.json`
+declares `basics`, `barriers`, `research-project`, `tidy-repo`,
+`grow_with_claudinite`, `local/gratio` — never `git-github` — so
+`Skill({skill:"merge-to-main"})` always answers *"Unknown skill:
+merge-to-main"* (hit on issues #32 and #37, 2026-07-28/29). The owner's `LGTM`
+still means that recipe; until `git-github` is declared, read it directly from
+`.claudinite/shared/packs/git-github/skills/merge-to-main/SKILL.md` rather than
+invoking the Skill tool.
+
+That recipe's step 5, syncing local `main` after the MCP merge
+(`git checkout main && git pull origin main`), buys nothing here and should be
+skipped: `capture-log.mjs` writes through git plumbing against the fetched
+remote tip, never the local checkout, so nothing downstream reads a synced
+`main`. Switching off the session's own branch to run it is also expensive and
+unreliable — measured 9s/147s/81s/40s of wall clock across four runs, with one
+(issue #37) denied twice by the auto-mode classifier and abandoned for zero
+benefit. Go straight from `merge_pull_request` to `capture-log.mjs --issue <n>`.
