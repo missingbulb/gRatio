@@ -88,7 +88,39 @@ function vendoredSet(root, files) {
 // all UTC. Absence means the documented defaults, so an omitted key is not an
 // error; a present one is range-validated at load below. Its declaration is also
 // the per-repo cutover marker during the scheduling rollout (MIGRATION Phase 0.6).
-export const CONFIG_KEYS = ['packs', 'rules', 'accept', 'sharedConstants', 'packConfig', 'maintenance', 'claudinite', 'taskScheduler'];
+// `badges` is the repo's say over the pack-badge row baselining maintains in its
+// README — { readme: 'auto' | 'off' }. Materialized explicitly into every member
+// (the wiring converge writes it) rather than inferred from absence, so the knob
+// sits visibly in the file anyone would open to change it.
+// `dormant` is the project's own declaration that it is out of the RECURRING work —
+// see isDormant below for exactly how much that covers.
+export const CONFIG_KEYS = ['packs', 'rules', 'accept', 'sharedConstants', 'packConfig', 'maintenance', 'claudinite', 'taskScheduler', 'badges', 'dormant'];
+
+// Does this project declare itself DORMANT? A project goes dormant when it is
+// finished, parked, or simply not being worked on: it should stop paying the
+// upkeep of a project that IS being worked on.
+//
+// What dormancy means, exactly — it is narrow on purpose:
+//   - NO RECURRING WORK. The vendored scheduler stops before it evaluates
+//     anything (engine/scheduler/run.mjs), so no task is due, no dispatch issue
+//     is filed, no agent session is started, and no maintenance PR is opened.
+//     Nothing scheduled runs "for nothing" on a repo nobody is working on.
+//   - NO FLEET CEREMONY. Whatever looks at this repo from the OUTSIDE reads the
+//     same declaration and leaves it alone rather than reporting it as unhealthy —
+//     a repo TOLD to stop keeping up must not then be nagged for not keeping up.
+//     Which is why this predicate is exported for a raw declaration too (below).
+//   - EVERYTHING ELSE STAYS ON. Claudinite is not switched off: the session
+//     hooks, the checks engine, the mounted skills and pack prose all work
+//     exactly as before the moment someone opens a session on the repo. Dormancy
+//     is about unattended upkeep, never about what an interactive session may do.
+//
+// The predicate reads BOTH shapes deliberately: a raw parsed .claudinite-checks.json
+// and the normalized config loadConfig returns. A cross-repo reader fetches another
+// repo's declaration over the API with no engine loaded against that tree, and it
+// must decide dormancy by the same test that repo's own scheduler used — a second
+// notion of dormancy would nag exactly the repos that had already opted out. One
+// definition, both sides.
+export const isDormant = (config) => config?.dormant === true;
 
 // The keys a `schedule` object may carry, and the canonical weekday vocabulary
 // (mirrored from engine/scheduler/slots.mjs WEEKDAYS — kept as a literal here so
@@ -124,7 +156,7 @@ export const PACK_ENTRY_KEYS = ['id', 'config', 'answers', 'rules', 'accept', 'v
 // read this one shape regardless of which form the file used.
 export function loadConfig(root) {
   const path = join(root, '.claudinite-checks.json');
-  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, taskScheduler: null, claudinite: null, maintenance: null, errors: [] };
+  const empty = { packs: [], packEntries: [], rules: {}, accept: [], sharedConstants: [], packConfig: {}, taskScheduler: null, claudinite: null, maintenance: null, badges: null, dormant: false, errors: [] };
   if (!existsSync(path)) return empty;
 
   let raw;
@@ -263,6 +295,17 @@ export function loadConfig(root) {
     }
   }
 
+  // --- dormant: a plain boolean, validated as one. A string "true", a `{ since }`
+  // object or a reason left in its place would all read as dormant to a truthiness
+  // test and as active to this one, and the difference is a whole repo's scheduled
+  // work — so the wrong TYPE is a settings error, not a value to coerce.
+  if (raw.dormant !== undefined && typeof raw.dormant !== 'boolean') {
+    errors.push({
+      what: `"dormant" must be true or false, got ${JSON.stringify(raw.dormant)}`,
+      fix: 'set "dormant": true to stop this project\'s recurring work, or remove the key',
+    });
+  }
+
   return {
     packs,
     packEntries,
@@ -283,6 +326,11 @@ export function loadConfig(root) {
     // whole set so no future key can go the same way.
     claudinite: raw.claudinite ?? null,
     maintenance: raw.maintenance ?? null,
+    badges: raw.badges ?? null,
+    // Normalized to a boolean rather than passed through: everything downstream
+    // asks "is this project dormant", and a tri-state (true / false / absent) would
+    // invite each caller to answer the absent case for itself. Absent is active.
+    dormant: isDormant(raw),
     errors,
   };
 }

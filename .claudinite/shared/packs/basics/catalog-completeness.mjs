@@ -7,10 +7,11 @@ import { finding } from '../../engine/checks/helpers/findings.mjs';
 // Skills have no catalog of their own (#385): a skill is its owning pack's
 // content, listed nowhere but its pack.
 //
-// The membership token matches the catalog's own listing convention: every
-// pack row links `<name>/README.md`.
+// The membership token is the pack DIRECTORY, not a README inside it: a pack
+// whose whole README was the checks-and-skills table the manifest now carries
+// has no README at all, and the catalog still has to list it.
 const CATALOGS = [
-  { kind: 'pack', member: /^packs\/([^/]+)\/pack\.mjs$/, readme: 'packs/README.md', token: (n) => `${n}/README.md` },
+  { kind: 'pack', member: /^packs\/([^/]+)\/pack\.mjs$/, readme: 'packs/README.md', token: (n) => `(${n}/` },
 ];
 
 const rule = {

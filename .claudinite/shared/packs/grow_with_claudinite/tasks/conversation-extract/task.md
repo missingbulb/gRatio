@@ -47,7 +47,9 @@ wall-time numbers.
    so the `task-lifecycle` gate passes), armed for auto-merge the same way
    [growth-extract](../growth-extract/task.md) delivers: GitHub squash-merges it once the repo's checks pass,
    with no human review. For each rule that actually landed, post **one short comment** via
-   `add_issue_comment` on the issue named in the log's filename (`--issue-<n>--`): one provenance line (the
+   `add_issue_comment` on the issue named in the log's filename (`--issue-<n>--`) — where **`--issue-0--`
+   means the capture had no associated issue** (a session-end capture), so there is nothing to post on and
+   the rule simply lands without a comment: one provenance line (the
    rule added, the capture date, the session id), then a **200-word-max** description of just the slice of
    conversation that caused the rule — what was asked, what went wrong or got corrected, and why the rule
    follows from it. Summarize, never transcribe: the dialogue itself is far too verbose for an issue, so no

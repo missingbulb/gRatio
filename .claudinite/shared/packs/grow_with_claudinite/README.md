@@ -25,12 +25,13 @@ A member that wants the local stages without contributing lessons upstream **opt
 promotion** on its own entry — `{ "id": "grow_with_claudinite", "config": { "promote": false } }`
 — and the central promote stage skips it (absent or `true` = participate).
 
-## The conversation lifecycle — capture at merge, extract in a daily task, retention
+## The conversation lifecycle — capture in-session, extract in a daily task, retention
 
 The pack also owns **extraction from working sessions** — the conversation-side sibling of the
 issues/PRs/commits extract above, replacing the old in-session post-merge lessons pass. The two
 halves split by what each needs: **capture** needs the live session transcript, so it runs
-in-session at merge; **extraction** only reads the already-pushed logs, so it is an ordinary
+in-session (at merge, and again when the session ends); **extraction** only reads the
+already-pushed logs, so it is an ordinary
 scheduled task with `growth-extract`'s access model — the logs branch is *in the repo*,
 so reading it, committing lessons to local packs, and pruning are plain local git on the working
 tree; only posting the summary on the issue uses the GitHub MCP tools.
@@ -44,11 +45,32 @@ tree; only posting the summary on the issue uses the GitHub MCP tools.
    minus a short named allowlist of structural values, plus known credential stores — is
    redacted wherever it appears, with credential-shape patterns as the backstop; a secret the
    session itself transformed is beyond any static scrub, and push protection is the last
-   net), and pushes one file per merge onto the orphan **`conversation-logs`** branch:
-   `<stamp>--issue-<n>--<session>.jsonl`, commits marked `[skip ci]`. **Delta-aware:** a
-   session that merges twice pushes a second, disjoint file for the second merge's issue.
+   net), and pushes one file per **capture event** onto the orphan **`conversation-logs`**
+   branch: `<stamp>--issue-<n>--<session>.jsonl`, commits marked `[skip ci]`.
+   **Delta-aware, keyed on the session id:** every capture pushes only the entries after this
+   session's previous capture, whatever event produced it, so any two events chain into
+   disjoint files and a zero delta pushes nothing at all. Double-writing is therefore safe by
+   construction, not by coordination — the property [`session-end.mjs`](session-end.mjs) relies
+   on, so `pack.test.mjs` pins it directly.
    The branch is a **work queue, not an archive** — never merged; tips are cheap in shallow
    session clones and retention keeps them bounded.
+1. **Capture — again, when the session ends** ([session-end.mjs](session-end.mjs), invoked by the
+   engine's SessionEnd hook runner for every active pack that ships one). Same capture, with
+   `--issue 0`: **`0` means "no associated issue"**, and the filename shape stays byte-identical
+   on purpose — the retention prune, the `conversationLogs` signal and the extract's filename
+   parse all already accept it, whereas a *new* shape would be invisible to the prune and become
+   immortal on the branch. This event is what captures the sessions that never merge (a review, an
+   investigation, a session that ended in a question) and the post-merge **tail** of the ones that
+   do. **Best effort:** a container reclaimed by timeout never fires it, so nothing depends on it
+   having run — every firing enriches the record, every miss leaves exactly the merge-only
+   behaviour. An `issue-0` log has no issue for `conversation-extract` to post its exchange
+   summary on; nothing else about its lifecycle differs.
+   **Unattended sessions capture through the same step, deliberately not through the hook.** A
+   scheduled task's executor session ends by having its container reclaimed, which is exactly
+   the ending no `SessionEnd` fires on — so the executor runs the engine's runner itself as its
+   last step and names its dispatch issue in `CLAUDINITE_SESSION_ISSUE`, which this step uses in
+   place of `0`. Those logs therefore file under the task that ran (the dispatch issue's title
+   names `pack/task`), and the work no human watched becomes as countable as the work one did.
 2. **Fresh pass — the [conversation-extract](tasks/conversation-extract/task.md) scheduled task**
    (precondition: a substantive merge, or a logs branch with retention configured so the age-based
    prune still runs on a quiet repo; local git on the
@@ -65,8 +87,31 @@ tree; only posting the summary on the issue uses the GitHub MCP tools.
    sweep guarantees the prune runs even on a repo gone quiet). Every log gets exactly two
    judgment passes. **Unset retention = the prune deletes nothing** (capture-only, fail-safe).
 
-Adoption asks only for the `retention_days` value (10 recommended) — nothing to schedule, since
-extraction rides the fleet's one daily run like the other growth tasks.
+No adoption question over it — `retention_days` stays unset (hidden) by default, which is
+fail-safe (capture-only). A project that wants the prune active sets `config.retention_days`
+itself (10 is the recommended floor); nothing else to schedule, since extraction rides the
+fleet's one daily run like the other growth tasks.
+
+## Skill-usage metrics — what the mounted skills actually do
+
+Mounting a skill only puts its name and one-line description into the session prompt; whether the
+model ever **loads** it is discretion, and nothing recorded it. So the promotion ladder's
+skill-vs-prose call had no empirical feedback: a skill whose trigger never fires looked exactly like
+one that fires daily, and a "skill" that loads in every session (rules wearing a skill's clothes)
+looked exactly like a genuinely activity-scoped one.
+
+The [usage-fold](tasks/usage-fold/task.md) task closes that loop — daily, agentless, seconds. It
+counts skill loads **and their denominators** (captures, merges, sessions, user messages, user
+commands) out of the logs this pack already captures, into
+`.claudinite/local/usage.GENERATED.json`: day rows recomputed statelessly inside the raw retention
+window, week rows appended once past a `foldedThrough` watermark. Denominators are the point — a raw
+count cannot tell healthy-rare from broken, so the question is loads *against the sessions where that
+skill's own declared trigger plausibly applied*. Zeros are implicit (a skill with no loads has no
+key), which is what makes "never loads" visible: diff the file against the repo's mounted skills.
+
+Fleet-wide aggregation is deliberately **not** here — the canon knows mechanisms, never repos. It is
+the sheepdog pack's [`fleet-usage`](../sheepdog/tasks/fleet-usage/task.md) task, in the fleet-enforcer
+repo, which is the only place that knows who the members are.
 
 ## Rules
 

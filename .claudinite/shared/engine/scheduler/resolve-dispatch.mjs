@@ -23,9 +23,14 @@
 //      `CCR_TRIGGER_REPO`, `CCR_TRIGGER_ISSUE_NUMBER` — and writes no payload
 //      file at all. It NAMES the issue but carries neither the label that was
 //      added nor the body, so it resolves in two shots: this shell reports
-//      `needs-issue` with the number, the executor fetches that one issue's body
-//      and labels over MCP, and re-invokes with them (`--issue-body-file`,
-//      `--issue-labels`) for the identical validation.
+//      `needs-issue` with the number, the executor fetches that one issue over
+//      MCP, saves the tool's raw JSON response verbatim to a file, and
+//      re-invokes with `--issue-json` for the identical validation. The shell
+//      extracts body, labels, and title from the response itself — the agent
+//      pastes bytes, it never hand-extracts fields — and rejects a response
+//      whose `number` is not the trigger's, so fetching the wrong issue is
+//      caught in code. (`--issue-body-file` + `--issue-labels` remain as the
+//      manual fallback should the fetch's response shape ever surprise.)
 //
 // Reading only source 1 is what made every CCR-run executor session miss its own
 // trigger and select an issue by listing instead — the duplicate-execution bug
@@ -67,19 +72,19 @@
 // pass, so stopping costs a delay while guessing costs duplicated work.
 //
 // Usage: `node <engine>/scheduler/resolve-dispatch.mjs [self|fleet]`
-//                `[--issue-body-file <path>] [--issue-labels <csv>]`
+//                `[--issue-json <path> | --issue-body-file <path> --issue-labels <csv>]`
 // The positional argument is THIS SESSION's scope — which of the two executor
 // routines is running. It defaults to `self`, which is every ordinary project's
 // executor; the FLEET routine must pass `fleet` explicitly, and a fleet payload
 // arriving at a session that did not is reported as not-mine with that stated
-// plainly. The two flags carry what a CCR trigger cannot, and are ignored on the
-// Actions path (whose payload already has both).
+// plainly. The flags carry what a CCR trigger cannot, and are ignored on the
+// Actions path (whose payload already has everything).
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DISPATCH_PATH_RE, dispatchFirstLine, validateDispatchBody } from './validate-dispatch.mjs';
-import { readyLabelForScope } from './dispatch.mjs';
+import { parseDispatchTitle, readyLabelForScope } from './dispatch.mjs';
 import { SESSION_SCOPES } from './task-contract.mjs';
 import { SHARED_SUBDIR } from '../pack_loader/pack-registry.mjs';
 
@@ -102,9 +107,9 @@ export const scopeForLabel = (label) =>
 // Which checkout do the task paths in a dispatch body resolve against? Answered
 // from where THIS engine copy is mounted, not from cwd — a consumer runs the
 // vendored engine at `<root>/.claudinite/shared/engine/scheduler/`, the canon
-// repo runs its own at `<root>/engine/scheduler/` (executor.md, "Engine command
-// paths"). Deriving it from the module's own location means whichever copy the
-// executor invoked resolves against that copy's own repo, with nothing to pass.
+// repo runs its own at `<root>/engine/scheduler/`. Deriving it from the module's
+// own location means whichever copy the executor invoked resolves against that
+// copy's own repo, with nothing to pass — and nothing for executor.md to explain.
 const MOUNT_SUFFIX = sep + SHARED_SUBDIR;
 export function repoRootFrom(moduleUrl) {
   const home = dirname(dirname(dirname(fileURLToPath(moduleUrl)))); // <home>/engine/scheduler/<this file>
@@ -147,7 +152,7 @@ export function triggerFromEvent(event) {
   if (action !== 'labeled') return { error: `the event payload is a "${action}" event, not a label event — it names no dispatch` };
   if (typeof label !== 'string' || label === '') return { error: 'the label event carries no label.name' };
   if (!Number.isInteger(number)) return { error: 'the label event carries no issue.number' };
-  return { trigger: { source: 'payload', label, number, body: event.issue?.body ?? '' } };
+  return { trigger: { source: 'payload', label, number, body: event.issue?.body ?? '', title: event.issue?.title ?? '' } };
 }
 
 // The CCR trigger: same webhook, delivered as environment variables by Claude
@@ -215,6 +220,33 @@ export function readyLabelAmong(labels) {
   return { label: ready[0] };
 }
 
+// The CCR handshake's payload: the raw issue-fetch response, saved verbatim.
+// The whole point is that the executor pastes bytes instead of hand-extracting
+// fields — a body threaded through the shell mangles quoting, a hand-assembled
+// labels CSV drops one. Accepts both label shapes (the MCP tools return plain
+// strings, the REST API returns { name } objects), and surfaces `number` so the
+// caller can assert the agent fetched the issue the trigger actually names.
+export function parseIssueJson(raw) {
+  let issue;
+  try {
+    issue = JSON.parse(raw);
+  } catch (e) {
+    return { error: `not valid JSON: ${e.message}` };
+  }
+  if (issue === null || typeof issue !== 'object' || Array.isArray(issue)) {
+    return { error: 'not an issue object' };
+  }
+  const labels = (Array.isArray(issue.labels) ? issue.labels : [])
+    .map((l) => (typeof l === 'string' ? l : l?.name))
+    .filter((l) => typeof l === 'string' && l !== '');
+  return { issue: {
+    number: Number.isInteger(issue.number) ? issue.number : null,
+    body: typeof issue.body === 'string' ? issue.body : '',
+    labels,
+    title: typeof issue.title === 'string' ? issue.title : '',
+  } };
+}
+
 // The block the executor reads. `key: value` lines, one fact per line: an agent
 // quoting a field back must not have to parse prose, and a reader diffing two
 // runs must see exactly what changed.
@@ -231,7 +263,7 @@ async function main() {
   const scopeGiven = positional.length > 0;
   const scope = positional[0] ?? 'self';
   if (!SESSION_SCOPES.includes(scope)) {
-    console.error(`resolve-dispatch: unknown scope "${scope}" — usage: node resolve-dispatch.mjs [${SESSION_SCOPES.join('|')}] [--issue-body-file <path>] [--issue-labels <csv>]`);
+    console.error(`resolve-dispatch: unknown scope "${scope}" — usage: node resolve-dispatch.mjs [${SESSION_SCOPES.join('|')}] [--issue-json <path> | --issue-body-file <path> --issue-labels <csv>]`);
     process.exit(EXIT.usage);
   }
 
@@ -242,23 +274,47 @@ async function main() {
   }
 
   let { label, number, body } = trigger;
+  let title = trigger.title ?? '';
 
   // The CCR handshake: the trigger named the issue, the executor fetched it over
-  // MCP, and hands back here the two fields the environment could not carry.
+  // MCP, and hands back here — as the raw response, or the manual two-flag
+  // fallback — the fields the environment could not carry.
   if (trigger.source === 'ccr') {
+    const jsonFile = flags['issue-json'];
     const bodyFile = flags['issue-body-file'];
     const labelsCsv = flags['issue-labels'];
-    if (bodyFile === undefined || labelsCsv === undefined) {
+    let labels;
+    if (jsonFile !== undefined) {
+      let raw;
+      try {
+        raw = readFileSync(jsonFile, 'utf8');
+      } catch (e) {
+        console.error(`resolve-dispatch: --issue-json ${jsonFile} is unreadable: ${e.message}`);
+        process.exit(EXIT.usage);
+      }
+      const { issue, error } = parseIssueJson(raw);
+      if (error) {
+        console.error(`resolve-dispatch: --issue-json ${jsonFile} is ${error}`);
+        process.exit(EXIT.usage);
+      }
+      if (issue.number !== null && issue.number !== number) {
+        console.error(`resolve-dispatch: --issue-json carries issue #${issue.number}, but this session's trigger names #${number} — that is the wrong issue. Fetch #${number} alone and re-run.`);
+        process.exit(EXIT.usage);
+      }
+      ({ body, title } = issue);
+      labels = issue.labels;
+    } else if (bodyFile !== undefined && labelsCsv !== undefined) {
+      try {
+        body = readFileSync(bodyFile, 'utf8');
+      } catch (e) {
+        console.error(`resolve-dispatch: --issue-body-file ${bodyFile} is unreadable: ${e.message}`);
+        process.exit(EXIT.usage);
+      }
+      labels = labelsCsv.split(',').map((l) => l.trim()).filter(Boolean);
+    } else {
       done(EXIT.needsIssue, { dispatch: 'needs-issue', issue: number, scope, source: 'ccr', repo: trigger.repo || '(unset)' },
-        `the CCR trigger names issue #${number} but carries neither its body nor its labels. Fetch ISSUE #${number} ALONE over MCP (its body and its current labels), write the body verbatim to a file, then re-run: node <engine>/scheduler/resolve-dispatch.mjs ${scope} --issue-body-file <path> --issue-labels <comma-separated current labels>. Do not list, select, or touch any other issue.`);
+        `the CCR trigger names issue #${number} but carries neither its body nor its labels. Fetch ISSUE #${number} ALONE over MCP (the issue-get tool), save the tool's raw JSON response verbatim to a file, then re-run: node <engine>/scheduler/resolve-dispatch.mjs ${scope} --issue-json <path>. Do not list, select, or touch any other issue.`);
     }
-    try {
-      body = readFileSync(bodyFile, 'utf8');
-    } catch (e) {
-      console.error(`resolve-dispatch: --issue-body-file ${bodyFile} is unreadable: ${e.message}`);
-      process.exit(EXIT.usage);
-    }
-    const labels = labelsCsv.split(',').map((l) => l.trim()).filter(Boolean);
     const { label: ready, error: labelError } = readyLabelAmong(labels);
     if (labelError) {
       done(EXIT.notMine, { dispatch: 'not-mine', issue: number, scope, labels: labels.join('|') || '(none)' },
@@ -311,8 +367,15 @@ async function main() {
       `issue #${number} is not a valid dispatch: ${verdict.reason}. It must not run — comment naming what failed, remove the "${label}" label, add "needs-human", and end the session.`);
   }
 
+  // `brief` is the one line the executor quotes prominently in chat before it
+  // acts, so a human skimming the session sees at a glance which task ran and
+  // under what parameters. The slot comes from the dispatch title when the
+  // trigger carried one (the Actions payload and --issue-json both do; the
+  // manual two-flag fallback does not).
+  const slot = parseDispatchTitle(title)?.slotId ?? null;
   done(EXIT.ok, {
     dispatch: 'valid',
+    brief: `Task: ${verdict.pack}/${verdict.task}${slot ? ` (slot ${slot})` : ''} — issue #${number}, model ${verdict.resolvedModel}, outcome ceiling ${verdict.outcome}, timeout ${verdict.executionTimeout ?? 'none'}s`,
     issue: number,
     scope,
     label,
@@ -320,6 +383,7 @@ async function main() {
     taskPath: verdict.taskPath,
     pack: verdict.pack,
     task: verdict.task,
+    slot: slot ?? 'unknown',
     model: verdict.model,
     resolvedModel: verdict.resolvedModel,
     outcome: verdict.outcome,

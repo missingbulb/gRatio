@@ -46,8 +46,8 @@ Follow the extract stage's check-authoring discipline (the local promotion ladde
    doesn't ship.
 3. **Ship at real severity, fail-fast** — blocking for a defect, advisory only when the rule is
    directional by kind.
-4. **Trim the prose** to rationale — the check owns enforcement now; leaving both pays twice and
-   springs the drift trap.
+4. **Delete the prose the check now covers** — whole, never trimmed. The deletion test below is
+   how you decide which paragraphs those are.
 
 **Before writing a rule off as un-checkable, try parsing the file's structure instead of grepping
 its text.** Grep finds the pattern anywhere; parsing finds it in the one spot the rule means —
@@ -58,11 +58,36 @@ check to the same fixture bar.
 When even a scoped parser can't make detection confident, **leave the prose and log the
 candidate** to a tagged conversion-backlog issue rather than shipping a shaky check.
 
+## Coming out: the deletion test
+
+Coming out of a conversion, apply the **deletion test**: prose a mechanism fully covers is
+deleted, never trimmed. Ask it of every paragraph standing beside a landed check — *with this
+paragraph gone, would the check still catch every violation it describes **and** tell the agent
+how to fix it?* If yes, it is redundant: delete it whole. The check's failure message is where
+the rule lives now and its header comment is where the rationale lives, so a paragraph restating
+either pays twice and is the drift trap waiting to spring.
+
+Before concluding prose is the only carrier, look at the pack's **skills** too — an
+activity-scoped skill often already holds the map a rule is repeating. Keep only what no artifact
+carries.
+
+The test **discriminates** rather than just deleting: a paragraph stays whole whenever it carries
+something the check does not — a second rule in the same breath, an exemption the check can't
+encode, a value the check can't judge, or a remedy the finding's own `fix` line never states
+(a finding renders `what` / `why` / `fix` / `doc`, never the rule's `description`, so a remedy
+that lives only in the description is not carried). Two worked calls: an `npm test` invariant
+went entirely — the check caught it and the testing-guide skill already listed the suites —
+while an `extension-test/` mirror bullet stayed, because the check beside it enforced only the
+`package.json` list's sync with the tree and never the mirror convention itself.
+
+Whether a check covers a rule is a judgment about meaning, so this test is applied by a
+**reader**, not mechanized.
+
 ## Bounds
 
 - **One PR, bounded surface** — the new rule module, its `pack.mjs` line, its fixture, and the
   trimmed prose. Don't "improve" unrelated rules while you're in there.
-- **Never delete a rule you didn't convert** — trimming prose is only for a rule a *landed* check
-  now enforces.
+- **Never delete a rule you didn't convert** — the deletion test is only ever asked of a rule a
+  *landed* check now enforces.
 - Run the suite and the sweep green before opening the PR; open it for the owner's approval,
   never a direct push to `main`.

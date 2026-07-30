@@ -16,6 +16,11 @@ import { contributedBarrierRules } from './contributed.mjs';
 // running empty and guessing separations from existing state.
 export default {
   id: 'barriers',
+  ruleRoutingGuidance: {
+    belongs: 'directed folder-access graph rules — which directories may never reference which, plus the exceptions each rule allows',
+    excludes: 'where a file should live or naming conventions — that is basics file-placement, not an access barrier',
+  },
+  badge: 'badge.svg',
   detect: null,
   marker: null,
   prose: null,
@@ -24,7 +29,7 @@ export default {
     prompt: 'What should these barriers accomplish — which folders must never reference which (imports, paths, docs included), and what architectural boundary does each separation protect?',
     distill: 'derive the directed edge list into this entry\'s config as { "rules": [{ "from": "<dir>", "to": "<dir>" }] }; if no separation is wanted yet, record that as the answer and leave config unset',
   }],
-  rules: [barrier],
+  worldRules: [barrier],
   // The runner's generic seam: this pack interprets the barrier contributions
   // of every ACTIVE pack (engine/checks/check_the_world.mjs hands the list over).
   contributedRules: (activePacks) => contributedBarrierRules(activePacks),

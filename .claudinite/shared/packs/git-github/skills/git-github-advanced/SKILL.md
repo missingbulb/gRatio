@@ -37,6 +37,10 @@ An automated prompt to commit the working tree (a stop-hook, a CI nag) tells you
 
 The default is to hold a PR until asked. Reverse that when a change's only reviewable output is produced by CI — an e2e/heavy-browser run, or a rendered artifact (a UI-snapshot pixel diff, a generated gallery) that can't be exercised in the local sandbox. Opening the PR is how the change is seen working and how failures surface, so doing it up front — rather than iterating locally first, which proves nothing for these classes — is the faster path to a working, reviewable result. Each CI iteration costs a full round-trip, so get the first one running as early as possible.
 
+## Never `git checkout <ref> -- <paths>` to carry uncommitted edits onto another branch
+
+It reads those paths out of `<ref>`'s **committed** tree and writes them over the working copy — so the uncommitted edits you were trying to move are destroyed, silently and unrecoverably (no reflog, no stash). Move in-progress work either by branching in place (`git checkout -b <new>`, which carries a dirty tree with it) or by committing/stashing first and then restoring on the new branch. In particular never put the checkout in the same `&&` chain as the branch creation: by the time it runs, the edits are already the only copy.
+
 ## Sync early to keep merge conflicts small
 
 Conflict size scales with how long a branch lives and how far it drifts from the default branch. Sync early rather than at the end: when starting work on a branch — and periodically while it's open — bring the latest default branch in first, so the branch carries current sources instead of discovering the gap at merge time. A one-commit-per-PR squash history already keeps each branch a single reviewable unit, so shorter-lived, freshly-synced branches are the norm.
@@ -79,31 +83,15 @@ A `workflow_dispatch` or scheduled workflow runs from the copy on the **default 
 
 GitHub's OIDC `sub` uses the repository's **canonical casing** (`repo:Owner/Repo:ref:…`), and a cloud trust policy compares it exactly — AWS IAM `StringEquals` is case-sensitive — so a trust policy written with the wrong case fails with a bare `Not authorized to perform sts:AssumeRoleWithWebIdentity` and **no** hint that casing is the cause. Match the exact canonical `owner/repo` (or list both casings in the condition). The same exact-match caution applies to any OIDC-federated cloud, not just AWS.
 
-## Gate an optional CI job on a repo variable, not a secret
-
-`secrets.*` are not available in a job-level `if:`, so a job gated on a secret can't evaluate its condition and **fails (red)** instead of skipping. Put a non-sensitive flag (a deploy-role ARN, a feature toggle) in a repository **variable** and gate with `if: ${{ vars.X != '' }}` so the job is **skipped (neutral)** until it's configured — keeping the default branch green for anyone who hasn't set the integration up. Reserve secrets for the values consumed *inside* the job's steps.
-
 ## An automated job needs a unique branch per run
 
 An automated or scheduled job that derives its branch name from a non-unique key (e.g. the date) collides with itself on a repeat run for that key — `git checkout -b` fails when the branch already exists, and a push to the diverged remote branch is rejected non-fast-forward (so the run can't even open its PR). Give every run its own branch: append a per-run-unique suffix (`$RANDOM` / a short token) to the readable prefix.
-
-## A workflow that adds a brand-new label must create it first
-
-`gh issue edit --add-label "<name>"` fails when the label doesn't exist yet — unlike applying an already-defined label, GitHub won't create it on demand, so a workflow that introduces a new label breaks the first time it runs. Create it idempotently before the edit (`gh label create "<name>" --color … 2>/dev/null || true`), then `--add-label`.
-
-## A GitHub Actions `run:` step's default shell has no `pipefail`
-
-GitHub's implicit default run-shell is `bash -e {0}` — **without** `pipefail` — so a step piping through another command (e.g. `cmd 2>&1 | tee log`) reports the *last* command's exit code, not the piped command's: a failing command still shows the step green. Set `defaults.run.shell: bash` (job- or step-level), which GitHub runs as `bash --noprofile --norc -eo pipefail {0}`, so the step fails when any command in the pipe fails.
 
 ## An unattended workflow must escalate its own failure to a human-visible state
 
 A workflow with no human watching the run — scheduled, triggered by a push/merge, or a fire-and-forget manual dispatch, with no other path that reaches a person — must converge a failure to something a human will see (e.g. open a `workflow-failure` issue for it) rather than merely exiting red in the Actions list, where nobody looks. Skip this only when the failure is already loud: a `pull_request`/push CI run that blocks merge with a red required check the author is watching, or a workflow that already flags the triggering issue itself on failure. The canon's [report-failure](../../../../.github/actions/report-failure/action.yml) action does exactly this — a **fresh** issue per failure, with earlier open failure issues for the same workflow closed as duplicates of the newest — so the current failure is always the single open bug to triage; a standing per-workflow issue appended to on each failure is an equally valid shape, the invariant is only that the red run reaches a person.
 
 When the escalation is itself a separate reusable workflow invoked via `workflow_call`, permissions don't propagate implicitly through the chain: the job that calls it needs the permission explicitly granted (e.g. `issues: write`), and if that reusable workflow in turn calls another one, the middle workflow must forward the same grant to its own call — a caller two levels up granting it once is not enough.
-
-## A CI job that reads submodule files must fetch submodules in its checkout
-
-`actions/checkout` does **not** fetch submodules by default — the submodule directory is an empty folder in CI unless you pass `submodules: true` (or `recurse-submodules: true`). Without it, any gate that reads submodule content passes vacuously: the check is a no-op, not a signal. Add the flag to every CI job whose tests read submodule content.
 
 ## A CI job that inspects commit shape must check out the PR head, not the merge ref
 
@@ -136,6 +124,15 @@ In a GitHub-rendered Markdown file, cmark-gfm re-enters Markdown mode inside a r
 ## When access is scoped to an explicit repo list, query per-repo — never an org/user-wide search
 
 A broad call (e.g. `search_repositories` with `org:X`, or any list/search tool that takes no repo argument) returns every repo the token can see, not just an allowed subset — filtering the result afterward doesn't undo the fact that disallowed repos' data was already pulled into the call. When operating under a repo allowlist, scope every call explicitly instead: pass the specific `owner`/`repo` params, or anchor the query to `repo:owner/name`, one call per repo in the allowlist rather than one broad call filtered after the fact.
+
+## Cap *and* qualify every list/search call — an unbounded one blows the tool-result limit
+
+A list or search API call that isn't bounded returns a full page of full-bodied records and overruns the agent's tool-result cap, which costs two or three further calls to dig the answer back out of the spilled result — a pure-overhead round trip on a call whose wanted answer was a single record. Two independent bounds, both needed:
+
+- **Qualify the query so it matches what you mean.** A bare string handed to an issue/PR search is a *full-text* search over the whole repo — title, body, and comments — so a lookup for one known issue returns every issue that merely mentions the phrase, each with its whole body. Anchor it to the field (`in:title "<exact title>"`), or use the narrower tool (a label-filtered `list_issues`, a run-id or head-SHA query) instead of a search.
+- **Pass a small explicit page size.** Default page sizes are tuned for a browser, not a tool result; when the answer wanted is one issue or one run, ask for 5–10, never a bare unpaged call.
+
+Both, not either: a qualified query still returns a full page, and a small page of unqualified matches is still the wrong records.
 
 ## Merging gotchas
 

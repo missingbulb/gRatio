@@ -20,6 +20,11 @@ import taskDeclarationShape from './task-declaration-shape.mjs';
 // authoritative — dropping it is a deliberate choice).
 export default {
   id: 'basics',
+  ruleRoutingGuidance: {
+    belongs: 'cross-project working discipline, issue-branch-PR lifecycle, repo hygiene, doc/reference integrity and the baseline engineering, testing and debugging skills',
+    excludes: 'technology-specific content — its own tech pack; GitHub Actions workflow or platform behaviour — github-actions; git procedure — git-github',
+  },
+  badge: 'badge.svg',
   detect: null,
   marker: null,
   seededByDefault: true,
@@ -32,14 +37,11 @@ export default {
   // requires closure materializes both declarations alongside it.
   requires: ['barriers', 'git-github'],
   contributes: { barriers: [claudiniteIsolation] },
-  rules: [
-    commentClassification,
-    referenceIntegrity,
+  // Rules that audit the repo as it stands, whatever this session did.
+  worldRules: [
     markdownLinkLabels,
-    taskLifecycle,
     warningSuppression,
     filePlacement,
-    squashMergeHistory,
     claudeMdLength,
     generatedMergeDriver,
     sharedConstants,
@@ -52,15 +54,32 @@ export default {
     schedulerWorkflowShape,
     taskDeclarationShape,
   ],
+  // Rules that judge the change and the session in front of you — the branch's
+  // commits, the diff, the conversation.
+  workRules: [
+    commentClassification,
+    referenceIntegrity,
+    taskLifecycle,
+    squashMergeHistory,
+  ],
   // The baseline skills — general engineering practice every project's work
-  // can call for, whatever its technology — are bundled under skills/ in this
-  // pack's own tree and mounted wherever basics is declared (which --init
-  // seeds everywhere). The directory listing IS the manifest; when one stops
-  // being a baseline activity, move its directory to the pack whose projects
-  // need it (#385 moved the git/GitHub and Claudinite-lifecycle skills out).
+  // can call for, whatever its technology — bundled under skills/ in this pack's
+  // own tree and mounted wherever basics is declared (which --init seeds
+  // everywhere). When one stops being a baseline activity, move its directory to
+  // the pack whose projects need it and move this line with it (#385 moved the
+  // git/GitHub and Claudinite-lifecycle skills out).
   //
   // The baseline scheduled task every repo runs — baselining, the per-repo
   // self-refresh — lives in this pack's `tasks/baselining/`, discovered by the
   // scheduler's filesystem scan (engine/scheduler/discover.mjs), not declared
   // here. Being in basics — declared everywhere — makes it universal.
+  skills: [
+    'authoring-agent-docs',
+    'bug-investigation',
+    'bump-version',
+    'engineering-practices',
+    'file-placement',
+    'repo-text-sweeps',
+    'writing-tests',
+  ],
 };

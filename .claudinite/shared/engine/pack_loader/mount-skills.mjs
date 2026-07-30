@@ -32,7 +32,7 @@ try {
     if (Array.isArray(raw.packs)) declared = raw.packs;
   }
 
-  const { loadPacks, isActive } = await import(join(corpusRoot, 'engine', 'pack_loader', 'pack-registry.mjs'));
+  const { loadPacks, isActive, bundledSkillSources } = await import(join(corpusRoot, 'engine', 'pack_loader', 'pack-registry.mjs'));
   // Include the project's own local packs — a local pack can require a canon
   // skill AND bundle its own under <pack>/skills/, mounted from the tracked pack
   // dir rather than the corpus mount.
@@ -45,20 +45,11 @@ try {
     join(projectRoot, '.claudinite', 'local_packs'),
   ];
 
-  // The union over the active packs' bundled skills — every <pack>/skills/<name>
-  // carrying a SKILL.md, resolved to that directory. Canon packs sort before
-  // local ones, so a name shared with a canon pack's skill resolves to canon.
+  // The union over the active packs' bundled skills (pack-registry's one
+  // definition of the mounted set). Canon packs sort before local ones, so a name
+  // shared with a canon pack's skill resolves to canon.
   const active = packs.filter((p) => isActive(p, { packs: declared }));
-  const sourceByName = new Map();
-  for (const pack of active) {
-    const bundleRoot = join(pack.dir, 'skills');
-    if (!existsSync(bundleRoot)) continue;
-    for (const entry of readdirSync(bundleRoot, { withFileTypes: true })) {
-      if (!entry.isDirectory() || sourceByName.has(entry.name)) continue;
-      const dir = join(bundleRoot, entry.name);
-      if (existsSync(join(dir, 'SKILL.md'))) sourceByName.set(entry.name, dir);
-    }
-  }
+  const sourceByName = bundledSkillSources(active);
   const wanted = [...sourceByName.keys()].sort();
 
   const mountDir = join(projectRoot, '.claude', 'skills');

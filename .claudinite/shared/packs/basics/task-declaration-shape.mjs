@@ -50,7 +50,12 @@ const rule = {
       enumField('expected_outcome', OUTCOMES);
 
       if (!/\bid:\s*['"]/.test(text)) flag('declares no string "id"', 'add "id": the task name (matching its directory)');
-      if (!/\bagent_instructions:\s*['"]/.test(text)) flag('declares no string "agent_instructions"', 'add "agent_instructions": the worker file beside task.mjs (e.g. "task.md")');
+      // agent_instructions is required only for an agentic task (agent_model !==
+      // 'none') — that's the worker file the agent reads. A `none` task runs no
+      // agent, so the field is not applicable.
+      if (model !== 'none' && !/\bagent_instructions:\s*['"]/.test(text)) {
+        flag('an agentic task (agent_model !== "none") declares no string "agent_instructions"', 'add "agent_instructions": the worker file beside task.mjs (e.g. "task.md")');
+      }
       if (!/\bprecondition_signals:\s*\[/.test(text)) {
         flag('declares no "precondition_signals" array', `add "precondition_signals": an array of ${SIGNAL_NAMES.join(', ')}`);
       }

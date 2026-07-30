@@ -1,6 +1,7 @@
 import { readdirSync, existsSync } from 'node:fs';
 import { join, dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { validateManifest, normalizeManifest } from './pack-schema.mjs';
 
 // This module lives at <canon>/engine/pack_loader/; the packs it scans at <canon>/packs/.
 const canonRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
@@ -140,11 +141,32 @@ async function scanPackDir(dir, { local, subdir }, errors) {
     // import needed (the pack owns the interview HYGIENE check; the engine owns
     // the manifest-shape validation).
     for (const e of packQuestions(mod).errors) errors.push({ ...e, dir: packDir });
-    const pack = { ...mod, dir: packDir, local };
+    // The rest of the manifest against the spec (pack-schema.mjs). REPORTED, not
+    // fatal: a pack whose declaration is incomplete still loads and still runs
+    // its checks — silently disabling a repo's own rules is a worse failure than
+    // the one being reported, and the blocking config error is what gets it fixed.
+    for (const e of validateManifest(mod, { label: `the pack in ${rel}`, skillDirs: skillDirNames(packDir) })) {
+      errors.push({ ...e, dir: packDir });
+    }
+    const pack = { ...normalizeManifest(mod), dir: packDir, local };
     pack.skillChecks = await scanSkillChecks(packDir, errors);
     out.push(pack);
   }
   return out;
+}
+
+// The skill directory names a pack bundles — the tree side of the manifest's
+// `skills` declaration, which the spec holds to it in both directions. Absent or
+// unreadable skills/ reads as none: scanSkillChecks reports the unreadable case,
+// and the spec must not turn one broken directory into a wall of phantom findings.
+function skillDirNames(packDir) {
+  const skillsRoot = join(packDir, 'skills');
+  if (!existsSync(skillsRoot)) return [];
+  try {
+    return readdirSync(skillsRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name).sort();
+  } catch {
+    return [];
+  }
 }
 
 // A pack's skill-owned checks: any <pack>/skills/<skill>/checks.mjs (default
@@ -263,6 +285,33 @@ export const packEntryId = (entry) =>
 // in .claudinite-checks.json (bootstrap's --init seeds the default-on packs).
 export const isActive = (pack, config) =>
   (config.packs ?? []).some((entry) => packEntryId(entry) === pack.id);
+
+// The MOUNTED SKILL SET: the union of the given packs' bundled skills, as a
+// Map(name -> the skill's directory). A bundled skill is `<pack>/skills/<name>/`
+// carrying a SKILL.md — the one shape, canon and local alike (#385). The packs are
+// taken in the caller's order and the FIRST occurrence of a name wins, so a caller
+// passing canon packs before local ones resolves a shared name to canon.
+//
+// One definition, two readers: the SessionStart mount hook (mount-skills.mjs) turns
+// it into `.claude/skills/` symlinks, and the usage fold asks it which skill names a
+// typed `/command` could possibly be. The mounts themselves are gitignored session
+// state, so anything reasoning about "what is mounted here" must ask the registry —
+// this function — and never the mount directory.
+export function bundledSkillSources(packs) {
+  const byName = new Map();
+  for (const pack of packs) {
+    const bundleRoot = join(pack.dir, 'skills');
+    if (!existsSync(bundleRoot)) continue;
+    let entries;
+    try { entries = readdirSync(bundleRoot, { withFileTypes: true }); } catch { continue; }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || byName.has(entry.name)) continue;
+      const dir = join(bundleRoot, entry.name);
+      if (existsSync(join(dir, 'SKILL.md'))) byName.set(entry.name, dir);
+    }
+  }
+  return byName;
+}
 
 // Import closure. A pack can't be imported without the packs it requires: a
 // release pack builds on its coding pack, a project-class pack on the framework

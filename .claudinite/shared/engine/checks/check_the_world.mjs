@@ -18,7 +18,7 @@ import { writeFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildContext } from './helpers/repo-context.mjs';
 import { discoverPacks, resolveDeclaredPacks } from '../pack_loader/pack-registry.mjs';
-import { runActivePackRules, contributedRules } from './run-active-pack-rules.mjs';
+import { runActivePackRules, packRules } from './run-active-pack-rules.mjs';
 import { reportFindings } from './report-findings.mjs';
 
 const configError = (what, fix) => ({
@@ -33,12 +33,7 @@ const root = value('--root') || process.cwd();
 
 if (has('--list')) {
   const { packs } = await discoverPacks({ localRoot: root });
-  const rules = [
-    ...packs.flatMap((p) => p.rules ?? []),
-    ...packs.flatMap((p) => p.skillChecks ?? []),
-    ...packs.flatMap((p) => contributedRules(p, packs)),
-  ];
-  for (const r of rules.sort((a, b) => a.id.localeCompare(b.id))) {
+  for (const r of packRules(packs)) {
     console.log(`${r.id}\t${r.severity}\t${r.description}\t${r.doc}`);
   }
   process.exit(0);

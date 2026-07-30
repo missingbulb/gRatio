@@ -16,9 +16,15 @@
 //     stale one — no special case needed, the most-recent-only rule delivers it.
 //   - Late / early fire is irrelevant: due-ness is schedule math, never
 //     wall-clock equality with the (hashed :10–:50) cron minute.
-//   - First run (`lastSuccess` null / fresh adoption) → every frequency's
-//     most-recent slot is due: the immediate full evaluation that smoke-tests a
-//     newly-wired repo (DESIGN §3.1).
+//   - First run (`lastSuccess` null / fresh adoption) → the most-recent slot of
+//     the FIRST-RUN SET only (hourly + the daily family): the immediate
+//     evaluation that smoke-tests a newly-wired repo, without an off-anchor
+//     weekly/monthly run on it (DESIGN §3.1, #522).
+//
+// `lastSuccess` null means exactly one thing — the ledger was read and holds no
+// successful run. A ledger that could not be READ is never null: the caller
+// (`lastSuccessTime`) throws, and the run fails rather than reach this math with
+// a watermark it had to guess (#522).
 //
 // All times are UTC (the `schedule` values are UTC by contract, DESIGN §2). This
 // module never reads the clock itself — `now` is always injected — so the whole
@@ -28,6 +34,17 @@
 // rejects anything outside this set at author time; here an unknown token is
 // simply never due (defensive — the scheduler must not throw on a stray value).
 export const FREQUENCIES = ['hourly', 'daily-2h', 'daily-1h', 'daily', 'daily+1h', 'weekly', 'monthly'];
+
+// What a FIRST run (an empty ledger — fresh adoption) evaluates. Deliberately
+// not every frequency: the first run is an adoption smoke test, and the wiring
+// it proves — task discovery, signal collection, the dispatch issue, the label,
+// executor pickup — is identical whatever the frequency, so the daily family
+// exercises all of it. Including weekly and monthly would only add an
+// off-anchor run of their unconditional tasks (open-web research, pack
+// discovery, the fleet sweep) on the least-proven repo in the fleet, at the
+// moment nobody is watching it. They wait for their real anchor, which is due
+// normally once the ledger has this run in it (#522).
+export const FIRST_RUN_FREQUENCIES = ['hourly', 'daily-2h', 'daily-1h', 'daily', 'daily+1h'];
 
 // The documented anchor defaults (DESIGN §2) — applied when a repo omits
 // `schedule` or any of its keys. This is the single source of these values; the
@@ -123,8 +140,8 @@ export function mostRecentSlot(frequency, schedule, now) {
 
 // The frequencies that are due right now, each with its slot id/time. `lastSuccess`
 // is the last successful scheduler run's timestamp (Date / ISO string / null);
-// null means "no prior success" → everything due. Unknown frequency tokens are
-// ignored (never due) rather than thrown on.
+// null means "the ledger holds no prior success" → the FIRST_RUN_FREQUENCIES set
+// is due. Unknown frequency tokens are ignored (never due) rather than thrown on.
 export function dueSlots(frequencies, schedule, now, lastSuccess) {
   const s = normalizeSchedule(schedule);
   now = new Date(now);
@@ -137,7 +154,9 @@ export function dueSlots(frequencies, schedule, now, lastSuccess) {
     const slot = mostRecentSlot(frequency, s, now);
     const t = slot.time.getTime();
     // `t <= nowMs` holds by construction; kept explicit as the stated contract.
-    const due = tMs === null ? t <= nowMs : t > tMs && t <= nowMs;
+    const due = tMs === null
+      ? FIRST_RUN_FREQUENCIES.includes(frequency) && t <= nowMs
+      : t > tMs && t <= nowMs;
     if (due) out.push({ frequency, slotId: slot.id, slotTime: slot.time.toISOString() });
   }
   return out;

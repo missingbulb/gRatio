@@ -5,12 +5,14 @@
 // per task, each with its own trigger, scope, and tracker, so there is no ordering
 // barrier.
 //
-// WEEKLY, and full every time. The `branches` signal carries NAMES only, so there is
-// no windowed subset to narrow to — the whole set is the only scope this dimension
-// has. Branch cruft also accumulates on a weekly clock, not a daily one, and the
-// verdict is a standing recommendation for a human rather than a same-day alert. So
-// the full sweep is a frequency DECLARATION, never a gate trick inside a daily task
-// (DESIGN §3).
+// WEEKLY, and full every time it runs — but it only runs when a branch actually
+// MOVED in the window. Branch cruft accumulates on a weekly clock, not a daily one,
+// and the verdict is a standing recommendation for a human rather than a same-day
+// alert, so the full sweep is a frequency DECLARATION, never a gate trick inside a
+// daily task (DESIGN §3). What the sweep is NOT is unconditional: re-deriving the
+// same verdicts over an unchanged pile of branches costs an agent run and produces a
+// tracker rewrite identical to last week's. Scope stays full because a verdict is
+// relative to the others (superseded-by, already-in-main); the GATE is newness.
 //
 // Self-contained (imports nothing): the whole contract is this default export.
 
@@ -36,22 +38,32 @@ const PRESUMED_DEFAULT = new Set(['main', 'master']);
 export default {
   id: 'tidy-branches',
   frequency: 'weekly',                      // the weekly anchor (DESIGN §2); the full sweep is the declaration
-  precondition_signals: ['branches'],       // names only — the assessable set IS the scope
+  precondition_signals: ['branches'],       // names for the scope, `touched` for the gate
   agent_model: 'sonnet',                    // superseded / orphaned / already-in-main are judgment calls on content
   expected_outcome: 'none',                 // assess-only: never deletes, pushes, or merges; writes only its tracker
   agent_instructions: 'task.md',
   agent_execution_timeout: 600,             // one cheap diff-and-merge-base read per branch
 
-  // The only gate a full sweep needs: is there a branch worth assessing. A repo
-  // carrying nothing but its default branch (and the infra branches) stays silent.
+  // Two gates, in order. Is there a branch worth assessing at all — a repo carrying
+  // nothing but its default branch (and the infra branches) stays silent. Then: did
+  // any of them MOVE in the window. An unchanged set of branches yields the same
+  // verdicts it yielded last run, so re-deriving them buys nothing; the standing
+  // picture already lives in the tracker. When something did move, scope is still
+  // the FULL set — a branch's verdict is relative to the others (superseded-by,
+  // already-in-main), so assessing the new one alone would be assessing it blind.
   precondition(signals) {
-    const branches = (signals.branches?.names ?? [])
-      .filter((b) => !IGNORED_BRANCHES.has(b) && !PRESUMED_DEFAULT.has(b));
+    const assessable = (b) => !IGNORED_BRANCHES.has(b) && !PRESUMED_DEFAULT.has(b);
+    const branches = (signals.branches?.names ?? []).filter(assessable);
     if (!branches.length) return { run: false, reason: 'no branches to assess beyond the default and the infra branches' };
+
+    const moved = (signals.branches?.touched ?? []).filter(assessable);
+    if (!moved.length) {
+      return { run: false, reason: `no branch created or moved in the window — the standing picture over ${branches.length} branch(es) is unchanged` };
+    }
 
     return {
       run: true,
-      reason: `weekly full sweep over ${branches.length} branch(es)`,
+      reason: `${moved.length} branch(es) moved in the window — full sweep over ${branches.length} branch(es)`,
       context: [`Branches to assess (read-only — recommend deletions, never delete): ${branches.join(', ')}.`],
     };
   },

@@ -68,6 +68,15 @@ A project is a bundle of **facets**, each a candidate pack on its own axis:
 **The product itself is never a facet** — "this specific product" doesn't recur, by definition; its
 rules land in the project's own local pack.
 
+And a *statement of what the product does* isn't a pack rule at all — not even a local one. A pack, canon
+or local, homes **how we work**: the conventions, gotchas and review discipline that recur across tasks
+whatever the feature happens to be. A rule asserting which entities exist, what a surface must render, or
+that a feature's parts are wired to each other is a **requirement**; its home is the project's executable
+spec and the suite that proves it. Encoding it as a pack check instead splits one feature's definition
+across two systems and lands it in the one no test of the product ever reads. Pack-worthiness is a question
+about the *work*, not about how load-bearing the code is — a real gap in product coverage is a requirements
+gap, and answering it with a pack is how a feature's spec ends up somewhere nothing executes it.
+
 <example>
 One extension project can exhibit four facets at once: `spec-driven-product` (class),
 `chrome-extension` + `node` (technologies), `chrome-extension-release` (aspect, once it ships) — and

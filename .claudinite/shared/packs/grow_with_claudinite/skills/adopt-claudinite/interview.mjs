@@ -107,11 +107,25 @@ async function check(projectRoot) {
 }
 
 // CLI — but importable (the tests and the runner import the pure helpers above).
+//
+// NEVER `await check(...)` here. This module sits in a cycle that closes only
+// when it is the ENTRY point: check() calls loadPacks(), whose discovery
+// dynamically imports every pack's skills/<skill>/checks.mjs, and both
+// adopt-claudinite/checks.mjs and adopt-pack/checks.mjs import `interviewState`
+// from this file. A top-level await holds this module's evaluation open, so that
+// re-import can never resolve, the await never settles, and Node exits 13
+// without running the check at all — silently, since the orchestrator treats a
+// failed step as fail-soft. Starting the work AFTER evaluation completes leaves
+// the same cycle harmless: the re-import resolves against a finished module.
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {
   const cmd = process.argv[2];
   const projectRoot = process.env.CLAUDE_PROJECT_DIR || process.cwd();
   if (cmd === 'check') {
-    await check(projectRoot); // fails soft upstream — the orchestrator tolerates a step failure
+    // Fails soft upstream — the orchestrator tolerates a step failure, so a
+    // broken check must degrade to a missing note, never to a crash.
+    check(projectRoot).catch((e) => {
+      process.stderr.write(`interview check failed: ${e.message}\n`);
+    });
   } else {
     process.stderr.write('usage: interview.mjs check\n');
     process.exit(2);
