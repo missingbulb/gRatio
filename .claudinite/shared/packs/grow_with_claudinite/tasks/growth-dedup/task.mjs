@@ -5,14 +5,23 @@
 //
 // The old fleet's `relevantCanonChanged` becomes the `sharedMount` signal — a
 // declared pack's vendored files moving is the local echo of "the canon this repo
-// mounts changed" — and the weekly re-check crutch retires: a quiet repo with no
-// local packs skips.
+// mounts changed" — so movement, never the calendar, is what wakes this: a quiet
+// repo with no local packs skips.
+//
+// The cadence is WEEKLY, not daily (#582). A member's mount moves most nights —
+// baselining converges it daily — so a daily slot fired this opus dispatch, and the
+// owner-gated PR behind it, nearly every night. Pruning is not latency-sensitive: a
+// local item the canon has already absorbed stays harmlessly correct until it goes,
+// so the daily slot bought noise rather than freshness. Nothing is missed by the
+// move — both signals below are WINDOW-scoped, and the collection window is the
+// widest due task's period, so the weekly run sees a full 7 days of canon and
+// local-pack movement batched into one dispatch.
 //
 // Self-contained (imports nothing): the whole contract is this default export.
 
 export default {
   id: 'growth-dedup',
-  frequency: 'daily+1h',           // the 05:00 slot — prunes against the merged/mounted canon, after promote (DESIGN §2)
+  frequency: 'weekly',             // the weekly anchor — prunes against the mounted canon that morning's 02:00 baselining converged (DESIGN §2)
   precondition_signals: ['localPacks', 'sharedMount', 'commits'],
   agent_model: 'opus',                   // proving the canon genuinely covers a local item — and telling coverage from "stated too generally" — is a judgment call
   expected_outcome: 'open-pr',              // a wrongful prune deletes a real local lesson, so this keeps a HUMAN approval gate (never auto-merge)
