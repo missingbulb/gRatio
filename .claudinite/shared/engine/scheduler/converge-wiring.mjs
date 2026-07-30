@@ -34,8 +34,8 @@ export const CLAUDE_MD = 'CLAUDE.md';
 export const CHECKS_PATH = '.claudinite-checks.json';
 export const README = 'README.md';
 
-// The pack-badge row: the marks of the packs this repo declares, on one line of
-// its README. Adopting Claudinite is what puts the row there and the nightly is
+// The pack-badge row: the marks of the packs this repo declares, on a single
+// line of its README. Adopting Claudinite is what puts the row there and the nightly is
 // what keeps it true — a hand-written row goes stale the day the repo declares
 // its next pack, which is exactly the class of upkeep this module exists to take
 // off a maintainer.
@@ -43,8 +43,15 @@ export const README = 'README.md';
 // Delimited by HTML comments rather than located by position, so the row can be
 // re-converged in place wherever the repo has moved it, and so anything the repo
 // writes AFTER the closing marker on the same line (a tagline, a build badge) is
-// its own and survives untouched. Inline, not block, precisely so that line can
-// carry both.
+// its own and survives untouched — which is why the CLOSING marker stays inline,
+// at the end of the badges' own line.
+//
+// The OPENING marker gets a line to itself, and that newline is load-bearing: a
+// line that BEGINS with `<!--` opens a CommonMark HTML block, and every character
+// through the line carrying `-->` is then emitted as raw HTML. Put the badges
+// after the opening marker on one line and a README renders the literal text
+// `![basics](…)` instead of the images (#587). Breaking the line ends the HTML
+// block at the marker, so the badges start a paragraph and parse as markdown.
 export const BADGE_ROW_START = '<!-- claudinite:packs -->';
 export const BADGE_ROW_END = '<!-- /claudinite:packs -->';
 const BADGE_ROW_RE = new RegExp(`${BADGE_ROW_START}[\\s\\S]*?${BADGE_ROW_END}`);
@@ -174,7 +181,7 @@ export async function badgeRowEntries(root, config) {
 }
 
 export const renderBadgeRow = (entries) =>
-  BADGE_ROW_START + entries.map((e) => `![${e.id}](${e.path} "${e.id}")`).join(' ') + BADGE_ROW_END;
+  `${BADGE_ROW_START}\n${entries.map((e) => `![${e.id}](${e.path} "${e.id}")`).join(' ')}${BADGE_ROW_END}`;
 
 // Write the row into the repo's README: replacing the delimited block where one
 // exists, otherwise introducing it just under the title (a README's badges belong

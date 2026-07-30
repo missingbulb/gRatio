@@ -1,6 +1,7 @@
 # gRatio — area-based myelin g-ratio from EM cross-sections
 
-<!-- claudinite:packs -->![basics](.claudinite/shared/packs/basics/badge.svg "basics") ![barriers](.claudinite/shared/packs/barriers/badge.svg "barriers") ![git-github](.claudinite/shared/packs/git-github/badge.svg "git-github") ![research-project](.claudinite/shared/packs/research-project/badge.svg "research-project") ![tidy-repo](.claudinite/shared/packs/tidy-repo/badge.svg "tidy-repo") ![grow_with_claudinite](.claudinite/shared/packs/grow_with_claudinite/badge.svg "grow_with_claudinite")<!-- /claudinite:packs -->
+<!-- claudinite:packs -->
+![basics](.claudinite/shared/packs/basics/badge.svg "basics") ![barriers](.claudinite/shared/packs/barriers/badge.svg "barriers") ![git-github](.claudinite/shared/packs/git-github/badge.svg "git-github") ![research-project](.claudinite/shared/packs/research-project/badge.svg "research-project") ![tidy-repo](.claudinite/shared/packs/tidy-repo/badge.svg "tidy-repo") ![grow_with_claudinite](.claudinite/shared/packs/grow_with_claudinite/badge.svg "grow_with_claudinite")<!-- /claudinite:packs -->
 
 Computes the myelin **g-ratio** from electron-microscopy cross-sections of
 axons, using an **area-based** definition that is robust to malformed /
