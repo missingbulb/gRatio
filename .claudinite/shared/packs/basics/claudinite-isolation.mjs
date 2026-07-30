@@ -36,6 +36,12 @@ export default {
   description: 'Outside the wiring files (.claude/, .gitignore, .gitattributes, .github/workflows/, the settings file), nothing may reference .claudinite/ — CLAUDE.md included — inline what you need instead of importing the canon',
   why: 'the vendored canon is refreshed nightly and refactored upstream; code that reaches into it inherits every canon rename as a breaking change',
   doc: 'vendoring/DESIGN.md',
+  // The remedy is to stop depending on the canon, not to relocate the
+  // dependency: there is no shared folder both sides may use (the mount is
+  // one-directional), and the canon is not the consumer's to restructure. The
+  // engine's default first clause would say "route shared code through a
+  // shared/contracts folder", which no consumer can act on.
+  crossingRemedy: 'inline what you need into your own tree (copy the few lines; the canon is refreshed nightly and is not yours to depend on)',
   crossingExcuse: 'if the crossing is deliberate, excuse it with accept: [{ "rule": "claudinite-isolation", "path": "<file>", "reason": "..." }] in .claudinite-checks.json (a pack-shipped barrier takes no per-rule except entries)',
   gateDir: SHARED_SUBDIR,
   edges: [{

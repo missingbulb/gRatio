@@ -57,6 +57,24 @@ optional polish. Follow it for every substantive algorithmic change.
   mostly-transparent fills), and give a matched object the **same colour in the
   result and the ground-truth panels** so over-/under-reach is obvious at a
   glance. Tag objects with small ids that key into the metrics table.
+- **Never draw an annotation in a colour the underlying signal itself carries.**
+  A mark in the signal's own colour disappears exactly on the objects it exists
+  to mark, so the figure looks cleanest where the method is least verified. Pick
+  the overlay palette against the data's own colours (and keep the choice
+  guarded, if the render is scripted), not by aesthetic preference.
+- **Show where the method breaks, not only where it works.** The overlay is a QA
+  tool before it is a result: point at the misses, the fragmentation, the cases
+  handled badly, and make each claim explicit and checkable ("this outline is
+  what I'm counting as an object; that one has no outline — it was missed") so
+  the owner can disagree with a specific claim rather than a general impression.
+- **Say which of the numbers you just reported are trustworthy, where you report
+  them.** Every quantity a project reports sits somewhere on a spectrum from
+  "measured and validated" to "indicative at best" — a quantity derived from a
+  low-resolution crop, one still inflated by a known failure mode, a split that
+  rests on a single threshold. State that boundary *inline, beside the number*,
+  not in a separate caveats section a reader meets after they have already
+  written the number down. A number quoted without its caveat is read as
+  trustworthy.
 - Throwaway renders and diagnostics live in the scratchpad; only the **final
   artifact and the code that regenerates it** get committed.
 
@@ -159,6 +177,17 @@ An iteration note captures:
 - **The metric delta** — before/after, per input, on the real scoring harness.
 - **What you tried and rejected, and why** — this is what stops the next session
   (or the next model) from walking back into the same dead end.
+
+### A metric's definition is part of its identity
+
+Write down what each reported metric actually counts, and treat **re-defining
+one as the owner's call, never a tuning step**. A definition change is uniquely
+silent: the column keeps its name and its units, so every number ever recorded
+under it *looks* comparable while the quantity underneath has moved. When a
+definition does change, the history is **re-measured, never re-labelled** — rerun
+the old inputs under the new definition, or mark the old numbers as belonging to
+the old one. Carrying both definitions' numbers in one series under one name is
+the failure this rule exists to prevent.
 
 ### Definition of done for an accepted change
 - **Source updated — never the generated artifacts.** (Regenerate them.)

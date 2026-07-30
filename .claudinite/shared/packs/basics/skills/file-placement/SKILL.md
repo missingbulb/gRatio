@@ -1,6 +1,6 @@
 ---
 name: file-placement
-description: Where a file should live — the reference-distance metric, the high-reach code smell, and the mandated-location and test-location exemptions. Use before placing, moving, or renaming a file, or when reviewing where one lives.
+description: Where a file should live — the reference-distance metric, the high-reach code smell, and the mandated-location, test-location and plugin-contract exemptions. Use before placing, moving, or renaming a file, or when reviewing where one lives.
 ---
 
 # File placement
@@ -78,6 +78,22 @@ Tests are a common source of long references that are **not** placement smells. 
 Apply the same narrowness as the mandated-location case: the exemption covers the **test → tested-file** reference that the convention forces, and it presumes the project *has* such a convention. Absent any standard, ordinary placement judgment still applies — co-locating a test with the code it exercises is a perfectly good distance-0 choice.
 
 **When picking a test-location convention from scratch, mirror the source tree — one test per source file at the same relative path** (`src/<area>/<name>` tested by `test/<area>/<name>.test`). The path *is* the link: a source file never has to name its own test in a comment, and a missing or misfiled test is obvious at a glance. Keep departures (whole-interaction tests, tests with no single source file to mirror) few and deliberate.
+
+## Special case: a plugin contract's shared lib
+
+The two exemptions above cover a file whose *own location* is fixed. A third case fixes **both ends of a reference**: a framework that discovers extension modules at a mandated path *and* publishes the shared lib those modules must import at another mandated path. Every extension takes the same import, at whatever distance the two mandated paths happen to sit apart — a plugin importing its host's plugin API, a check module importing the engine's finding constructor.
+
+**Exempt that reference too.** It is not a placement decision at either end: the extension can't move without ceasing to be discovered, and the lib is usually code the project doesn't own to restructure. The tell is universality — *every* extension of that kind takes the reference, in every repo, so a project can only ever waive it, never fix it. A waiver each adopter has to write is a rule flagging a constant.
+
+Apply the same narrowness as the other two:
+
+- It covers the **extension → published lib** direction only. Code reaching *into* an extension's folder, or an extension reaching somewhere other than the published lib, is judged normally.
+- It covers the framework's **declared** surface — the paths it tells extensions they may import — and nothing past it. Reaching around that boundary into internals is not exempt; that's the reach-deep-into-a-subtree smell, and the boundary the framework already drew is what makes it visible.
+- **Universal, not merely common.** A dependency several files happen to share is the lift-to-a-common-ancestor case above, and it is still fixable. This exemption is for the one every extension takes by construction.
+
+Take the surface from wherever the framework already defines it, rather than restating it. If some other rule enforces "an extension may import only X," that same X is what placement should exempt — one definition, so the two can't drift apart and disagree about the same import.
+
+In this corpus that means a pack module under `packs/` or `.claudinite/local/packs/` importing the engine surface (everything under `engine/` — `engineSurface()` in `engine/checks/helpers/module-imports.mjs`, the allow list the `pack-independence` barrier enforces; vendored under `.claudinite/shared/` in a consuming repo). The `basics/file-placement` check implements this exemption, so a pack rule's `findings.mjs` import needs no acceptance entry. A pack reaching into *another* pack, or deep into its own subtree, is judged normally.
 
 ## Tooling acts on paths: encode act-on-able distinctions structurally
 

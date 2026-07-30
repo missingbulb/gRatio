@@ -12,7 +12,8 @@ import {
 // manifest:
 //
 //   contributes: { barriers: [{ id, edges, description?, why?, doc?,
-//                               severity?, crossingExcuse?, gateDir? }] }
+//                               severity?, crossingRemedy?, crossingExcuse?,
+//                               gateDir? }] }
 //
 // The runner's generic seam hands this pack the ACTIVE pack list
 // (`contributedRules` on pack.mjs); this factory builds a first-class rule per
@@ -22,7 +23,7 @@ import {
 // declarative gate a contribution may carry: the rule stays inert until that
 // directory exists in the repo under test (the vendored-mount gate the
 // baseline's isolation barrier rides).
-function contributedRule({ id, edges, severity = 'blocking', doc = DEFAULT_DOC, description, why, crossingExcuse, gateDir }) {
+function contributedRule({ id, edges, severity = 'blocking', doc = DEFAULT_DOC, description, why, crossingRemedy, crossingExcuse, gateDir }) {
   const norm = normalizeEdges(edges);
   const rule = {
     id,
@@ -30,8 +31,12 @@ function contributedRule({ id, edges, severity = 'blocking', doc = DEFAULT_DOC, 
     doc,
     description: description || 'Files under a guarded folder must not reference a barred folder',
     why: why || 'a folder barrier encodes an architectural boundary; a crossing reference erodes it silently',
-    // Pack-shipped edges can't take project-side except entries, so a fixed
-    // barrier names its real excusal lever here (see barrierFindings).
+    // Both halves of a crossing finding's `fix` are overridable here (see
+    // barrierFindings): `crossingRemedy` replaces the default "route it
+    // through a shared folder" opener where that is not the way out, and
+    // pack-shipped edges can't take project-side except entries, so a fixed
+    // barrier names its real excusal lever too.
+    crossingRemedy,
     crossingExcuse,
     run(ctx) {
       if (gateDir && !existsSync(join(ctx.root, gateDir))) return [];

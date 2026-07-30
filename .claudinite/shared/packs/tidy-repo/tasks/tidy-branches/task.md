@@ -1,9 +1,10 @@
 # tidy-branches worker
 
-The **assess-only** branch third of the repo tidy-up: one weekly pass over the repo's open branches, then
-record the picture. You run under the executor, dispatched by a `ready-for-agent` issue; its **Context
-section is binding scope** — it lists the branches to assess. Work only those; don't enumerate the repo
-yourself. GitHub access is **MCP-only** (`mcp__github__*`).
+The **assess-only** branch third of the repo tidy-up: a weekly pass over the repo's open branches — run
+only when a branch was actually created or pushed in the window — then record the picture. You run under
+the executor, dispatched by a `ready-for-agent` issue; its **Context section is binding scope** — it lists
+the branches to assess. Work only those; don't enumerate the repo yourself. GitHub access is **MCP-only**
+(`mcp__github__*`).
 
 The task's declared outcome ceiling is **`none`**, and this dimension is read-only besides: **never delete,
 push, or merge a branch**, and never open or merge a PR. You recommend; a human acts. The only thing you

@@ -1,0 +1,12 @@
+<!-- A Claudinite pack badge. The colour and glyph below are this file's own — dev/tools/badges/render.mjs re-renders the template around them. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Claudinite pack: tidy-repo">
+  <title>tidy-repo</title>
+  <defs>
+    <linearGradient id="b-tidy-repo" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d9488"/>
+      <stop offset="1" stop-color="#0a736a"/>
+    </linearGradient>
+  </defs>
+  <rect width="32" height="32" rx="8" fill="url(#b-tidy-repo)"/>
+  <path d="M8.5 12h8 M8.5 17.5h6 M8.5 23h10 M23 9.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z" fill="none" stroke="#ffffff" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

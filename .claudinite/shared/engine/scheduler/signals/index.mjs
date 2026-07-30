@@ -148,9 +148,35 @@ const COLLECTORS = {
     };
   },
 
+  // Every open branch, each with the date of its tip commit — so a precondition
+  // can tell a branch that MOVED in the window from the standing pile that did
+  // not. `touched` is the same field name, with the same meaning, the `prs` and
+  // `issues` collectors carry; without it the branch dimension had no notion of
+  // newness at all and every gate over it degenerated to "a branch exists".
+  //
+  // The tip date costs one commit read per DISTINCT tip sha (branches sharing a
+  // tip share the read) because the branch listing carries no date of its own —
+  // no REST listing does. That is the price of the only newness this dimension
+  // can observe, and it is paid on a weekly clock over a handful of branches.
+  // A tip read that fails leaves `updatedAt: null`, which is NOT touched: no
+  // proof of movement never wakes an agent.
   async branches(gh, ctx) {
-    const names = (await paged(gh, `/repos/${ctx.repo}/branches`)).map((b) => b.name);
-    return { names };
+    const list = await paged(gh, `/repos/${ctx.repo}/branches`);
+    const since = new Date(ctx.sinceIso);
+
+    const dateBySha = new Map();
+    for (const sha of new Set(list.map((b) => b.commit?.sha).filter(Boolean))) {
+      const { status, json } = await gh(`/repos/${ctx.repo}/commits/${sha}`);
+      const c = status === 200 ? json?.commit : null;
+      dateBySha.set(sha, c?.committer?.date ?? c?.author?.date ?? null);
+    }
+
+    const entries = list.map((b) => ({ name: b.name, updatedAt: dateBySha.get(b.commit?.sha) ?? null }));
+    return {
+      names: entries.map((e) => e.name),
+      list: entries,
+      touched: entries.filter((e) => e.updatedAt && new Date(e.updatedAt) >= since).map((e) => e.name),
+    };
   },
 
   async release(gh, ctx) {

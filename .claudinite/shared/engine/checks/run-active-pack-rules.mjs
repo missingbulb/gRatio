@@ -18,6 +18,20 @@ export function contributedRules(pack, fromPacks, onError = null) {
   catch (e) { onError?.(e); return []; }
 }
 
+// The full rule catalog the given packs carry, id-sorted: a pack's own rules,
+// the checks its bundled skills own, and the rules built from contributions
+// addressed to it. The ONE place the three sources are summed — `--list`
+// prints it and the catalog's own tally guard counts it, so neither can
+// disagree with the runner about what rules exist, and a fourth source added
+// later lands in both for free.
+export function packRules(packs) {
+  return [
+    ...packs.flatMap((p) => p.rules ?? []),
+    ...packs.flatMap((p) => p.skillChecks ?? []),
+    ...packs.flatMap((p) => contributedRules(p, packs)),
+  ].sort((a, b) => a.id.localeCompare(b.id));
+}
+
 // Every finding from the active packs' rules that `includeRule` admits. A rule
 // turned `off` in settings is skipped. `onContributeError(pack, err)` is invoked
 // when a pack's contributedRules seam throws (the caller decides whether that

@@ -66,8 +66,11 @@ export function validateTaskDeclaration(decl) {
   if (!OUTCOMES.includes(decl.expected_outcome)) {
     bad(`"expected_outcome" ${JSON.stringify(decl.expected_outcome)} is not a legal outcome ceiling`, `set one of: ${OUTCOMES.join(', ')}`);
   }
-  if (typeof decl.agent_instructions !== 'string' || decl.agent_instructions.trim() === '') {
-    bad('the task has no string "agent_instructions"', 'point "agent_instructions" at the worker file beside task.mjs (e.g. "task.md")');
+  // agent_instructions — REQUIRED for an agentic task (agent_model !== 'none'):
+  // that's the worker file the agent reads. A `none` task runs no agent, so the
+  // field is not applicable and is neither required nor validated when present.
+  if (decl.agent_model !== 'none' && (typeof decl.agent_instructions !== 'string' || decl.agent_instructions.trim() === '')) {
+    bad('an agentic task (agent_model !== "none") declares no string "agent_instructions"', 'point "agent_instructions" at the worker file beside task.mjs (e.g. "task.md")');
   }
   if (typeof decl.precondition !== 'function') {
     bad('"precondition" is not a function', 'export a precondition(signals, config) that returns { run, reason, context? }');

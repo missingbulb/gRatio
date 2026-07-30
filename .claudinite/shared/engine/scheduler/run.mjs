@@ -19,6 +19,8 @@ import {
   AGENT_RUNNING_LABEL,
 } from './dispatch.mjs';
 import { isAgentless } from './model-map.mjs';
+import { isDormant } from '../checks/helpers/repo-context.mjs';
+import { renderTaskRuns } from './run-record.mjs';
 import { localSignalContext } from './signals/local.mjs';
 import { runPreprocessing, preprocessingFailure, agentRequestPath, clearAgentRequest, agentRequested } from './preprocess.mjs';
 
@@ -119,10 +121,19 @@ export function renderSummary(evaluations) {
 // Returns `{ evaluations }`: one record per due task with its precondition
 // verdict and, when it runs, either an inline marker (agent_model: none) or a
 // dispatch decision (planDispatch).
+//
+// DORMANCY IS THE FIRST GATE, ahead of the due-slot math and every task's own
+// precondition (`config`, the repo's loaded declaration). A dormant project has
+// said it is out of the recurring work: it is not that each task happens to have
+// nothing to do, it is that no task is asked. Putting the gate here rather than
+// in each precondition is the whole point — every task, canon and local, present
+// and future, is covered by one decision nothing has to opt into, and a task
+// never learns that dormancy exists.
 export async function planRun({
-  tasks, schedule, now, lastSuccess, overrides = {},
+  tasks, schedule, now, lastSuccess, overrides = {}, config = {},
   collectSignals, packConfigFor = () => ({}), existingIssuesFor = async () => [],
 }) {
+  if (isDormant(config)) return { evaluations: [], dormant: true };
   // `overrides` arrives as a parameter rather than out of `signals` because the
   // due list is what decides which signals get collected — the bag has to be
   // known before the collection it would otherwise be part of.
@@ -349,11 +360,41 @@ async function main() {
   const gh = makeGh();
   const config = loadConfig(root);
 
+  // The dormancy gate, before ANY of it: the run-ledger read, the task discovery,
+  // the signal collection, the issue I/O, the dispatch maintenance. planRun holds
+  // the same verdict (one predicate, both call sites) and would return an empty
+  // plan — but a dormant repo should not pay for the reads that produce it, and
+  // the maintenance pass below writes to issues, which is exactly the ceremony
+  // dormancy exists to stop.
+  //
+  // Exit 0, deliberately. The run enters the success ledger and the watermark
+  // advances past these slots, so waking a project up does NOT replay the months
+  // it slept through — it simply starts scheduling again from now. Slots skipped
+  // while dormant are skipped on purpose, not deferred.
+  if (isDormant(config)) {
+    console.log('## Claudinite scheduler\n');
+    console.log('- this project declares itself dormant ("dormant": true in .claudinite-checks.json) — no tasks evaluated, no work dispatched');
+    return;
+  }
+
   const { tasks, errors } = await discoverTasks(root, config);
   for (const e of errors) console.log(`! ${e.what}`);
 
   const now = new Date();
-  const lastSuccess = await lastSuccessTime(gh, repo);
+  // The watermark IS the scheduler's state, so a run that cannot read it cannot
+  // compute due-ness at all — and every guess is wrong in a way nobody sees:
+  // "assume fresh" re-fires the first-run set on a mature repo, "assume now"
+  // silently eats the slots it skipped. Fail the run instead. It must exit
+  // NON-ZERO: an exit-0 abort would enter the success ledger and advance the
+  // watermark past the very slots it declined to evaluate. Failing leaves the
+  // watermark untouched, so the next successful run catches them up (#522).
+  let lastSuccess;
+  try {
+    lastSuccess = await lastSuccessTime(gh, repo);
+  } catch (e) {
+    console.error(`${e.message} — cannot compute due slots; failing this run so the next one catches up`);
+    process.exit(1);
+  }
   const schedule = config.taskScheduler;
 
   const due = computeDueTaskSlots(tasks, schedule, now, lastSuccess);
@@ -396,7 +437,7 @@ async function main() {
   });
 
   const { evaluations } = await planRun({
-    tasks, schedule, now, lastSuccess, overrides,
+    tasks, schedule, now, lastSuccess, overrides, config,
     collectSignals: (names) => collectSignals(gh, ctx, names),
     packConfigFor,
     existingIssuesFor: (pack, task) => existingIssuesViaSearch(gh, repo, pack, task),
@@ -506,6 +547,14 @@ async function main() {
 
   console.log('## Claudinite scheduler\n');
   console.log(renderSummary(evaluations) || '- no tasks due');
+
+  // The machine-readable half of the same story (run-record.mjs): one line per due
+  // task saying what this run DID with it — dispatched an agent, ran it as
+  // preprocessing only, skipped it on its precondition, failed it, or deferred it.
+  // Printed AFTER the action loop, so each line reports what happened rather than
+  // what was planned, and read back by the usage fold to count task invocations.
+  // Nothing else in the scheduler depends on it: this is a record, not a signal.
+  if (evaluations.length) console.log(`\n${renderTaskRuns(evaluations)}`);
 }
 
 // Run only when invoked directly (the workflow's `node run.mjs`), never on import.

@@ -33,14 +33,36 @@ export function makeGh({ token = process.env.GITHUB_TOKEN, api = API, fetchImpl 
 }
 
 // The timestamp of the last SUCCESSFUL run of this workflow, from the Actions run
-// ledger (DESIGN §3.1) — the due-slot watermark, so there is no state file. Null
-// when there is no prior success (fresh adoption → a full evaluation). Reads the
-// workflow's own runs by file name.
-export async function lastSuccessTime(gh, repo, workflowFile = 'claudinite-scheduler.yml') {
+// ledger (DESIGN §3.1) — the due-slot watermark, so there is no state file. Reads
+// the workflow's own runs by file name.
+//
+// Returns null for EXACTLY ONE state: the ledger was read and holds no successful
+// run (fresh adoption → the first-run evaluation). Anything that leaves the
+// watermark unknown THROWS — this is the one read in the scheduler where the
+// non-2xx-is-data convention above does not apply, because null is not "no data"
+// here, it is a positive claim that this repo has never run. A rate limit, a 5xx
+// or a token blip returning null would make that claim on a mature repo and
+// re-fire every frequency off-anchor, silently. Failing instead costs nothing:
+// a failed run never enters the success ledger, so the watermark stays put and
+// the next successful run catches up every missed slot — the outage self-healing
+// of DESIGN §3.1, applied to the ledger read itself (#522).
+// The scheduler workflow's file name — the vendored shim's, identical in every
+// member (the workflow is core, not pack content). Named here because this is the
+// module that reads the workflow's own run ledger; anything else that needs to find
+// those runs (the usage fold reads their logs for the task-invocation records)
+// imports it rather than restating the string.
+export const SCHEDULER_WORKFLOW_FILE = 'claudinite-scheduler.yml';
+
+export async function lastSuccessTime(gh, repo, workflowFile = SCHEDULER_WORKFLOW_FILE) {
   const { status, json } = await gh(`/repos/${repo}/actions/workflows/${workflowFile}/runs?status=success&per_page=1`);
-  if (status !== 200) return null;
+  if (status !== 200) throw new Error(`run ledger unreadable: GET workflow runs returned ${status}`);
   const run = json?.workflow_runs?.[0];
-  return run ? (run.run_started_at || run.created_at || null) : null;
+  if (!run) return null;
+  const at = run.run_started_at || run.created_at;
+  // A run record exists, so this repo is demonstrably not a fresh adoption —
+  // saying null here would be the same wrong claim by a narrower route.
+  if (!at) throw new Error('run ledger unreadable: newest successful run carries no timestamp');
+  return at;
 }
 
 // The repo slug (owner/name) and default branch the workflow runs against, from

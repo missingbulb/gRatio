@@ -667,9 +667,19 @@ export function barrierFindings(ctx, edges, rule) {
       }
     }
 
-    const allowHint = edge.allow.length
-      ? `route shared code through an allowed folder (${edge.allow.join(', ')})`
-      : 'route shared code through a shared/contracts folder both sides may use';
+    // The fix's leading clause: how to KEEP the dependency legitimately. The
+    // default assumes a two-sided edge with somewhere shared to route through —
+    // true for a project's own folder graph, false for a one-sided isolation
+    // edge (nothing may reference the barred side at all, and its code is
+    // often not ours to restructure). A rule whose remedy is something else
+    // entirely — inline it, re-express it as declaration — overrides via
+    // `crossingRemedy`, the same seam as `crossingExcuse` below. The finding
+    // renders what/why/fix/doc and never the rule's `description`, so a remedy
+    // that lives only in the description never reaches whoever trips the rule.
+    const allowHint = rule.crossingRemedy
+      || (edge.allow.length
+        ? `route shared code through an allowed folder (${edge.allow.join(', ')})`
+        : 'route shared code through a shared/contracts folder both sides may use');
     // A pack-shipped fixed barrier's edges are code, so "add a reviewed
     // exception" (per-rule except entries in the project's own config) cannot
     // resolve its findings — such a rule overrides the excusal clause via

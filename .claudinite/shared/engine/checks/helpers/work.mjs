@@ -68,6 +68,11 @@ class Work {
   get files() { return this.ctx.files; }
   get changedFiles() { return this.ctx.changedFiles; }
   get tracked() { return this.ctx.tracked; }
+  // The discovered pack objects (runner-attached) and the normalized config —
+  // the pair a rule that reasons over pack metadata (e.g. adoption-interview
+  // state) hands to the interview helpers, without reaching into ctx itself.
+  get packs() { return this.ctx.packs ?? []; }
+  get config() { return this.ctx.config; }
   read(path) { return this.ctx.read(path); }
   readBase(path) { return this.ctx.readBase(path); }
   exists(path) { return this.ctx.exists(path); }

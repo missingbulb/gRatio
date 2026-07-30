@@ -46,10 +46,12 @@ and resolve the blocking findings that need judgment: apply a failing check's ow
 remedy) becomes an **issue in this repo**, not an edit — the same "surface it, don't
 guess" stance the align step always had. The mount and the wiring are already handled
 deterministically by preprocessing; you only touch what a check still flags.
-`convergeWiring`'s set is exactly three surfaces — the scheduler workflow
+`convergeWiring`'s set is exactly four surfaces — the scheduler workflow
 `.github/workflows/claudinite-scheduler.yml` (with its hashed cron and the tasks'
-declared secrets), the settings hooks, and removal of the retired `CLAUDE.md` corpus
-import. Pack-adoption **interview status** is not preprocessing's: unanswered questions
+declared secrets), the settings hooks, removal of the retired `CLAUDE.md` corpus
+import, and the README's pack-badge row (with the `badges.readme` knob it
+materializes into `.claudinite-checks.json`, which a repo sets to `"off"` to be left
+alone). Pack-adoption **interview status** is not preprocessing's: unanswered questions
 surface as a mild SessionStart note (never a finding), and a stale stored answer as
 adopt-claudinite's advisory hygiene check — so interview drift reaches you here, as a
 check finding like any other.

@@ -16,29 +16,33 @@ export default {
   agent_instructions: 'task.md',
   agent_execution_timeout: 900,             // one dimension over a bounded issue list
 
-  // Two triggers, and they are the complete set for this dimension: an issue's
-  // triage answer changes when the ISSUE moves, or when `main` moves (which can
-  // implement it). So a touched issue is in scope, and a substantive default-branch
-  // move widens scope to EVERY open issue — that widening is this task's full sweep,
-  // triggered by the thing that changes the answer rather than by the calendar. A
-  // housekeeping-only main move (a nightly baseline commit, a bot bump) implements
-  // nothing, so it does not widen and a quiet-but-maintained repo isn't re-swept.
+  // ONE trigger, and one widener. The trigger is a touched issue: if no issue was
+  // filed, commented on, labelled, or reopened in the window, this task does not
+  // run — the existing pile got the same triage last time it moved, and re-deriving
+  // it costs an agent run per day to rewrite the tracker with itself.
+  //
+  // A substantive default-branch move WIDENS an already-triggered run to every open
+  // issue, because a real commit can implement an issue the issue itself never
+  // recorded — but it no longer wakes the task by itself. On any repo whose `main`
+  // moves most days that widening was firing daily, which is a full re-triage of
+  // every open issue every day: exactly the "went over the existing ones with
+  // nothing new" this gate exists to prevent. A housekeeping-only move (a nightly
+  // baseline commit, a bot bump) implements nothing, so it does not widen at all.
   precondition(signals) {
     const substantive = signals.commits?.substantiveChange === true;
     const open = (signals.issues?.open ?? []).map((i) => i.number);
     const touched = signals.issues?.touched ?? [];
 
     // The scheduler's issues signal already hides the dispatch issues and the
-    // standing trackers, so neither can ever be triaged as project work.
-    const scope = substantive ? open : touched;
-    if (!scope.length) {
-      return { run: false, reason: substantive ? 'main moved substantively but the repo has no open issues' : 'no issues touched in the window' };
-    }
+    // standing trackers, so neither can ever be triaged as project work — nor can
+    // either of them count as the touch that triggers a run.
+    if (!touched.length) return { run: false, reason: 'no issues touched in the window' };
 
+    const scope = substantive ? open : touched;
     return {
       run: true,
       reason: substantive
-        ? `main moved substantively — re-check all ${scope.length} open issue(s) against it`
+        ? `issues touched, and main moved substantively — re-check all ${scope.length} open issue(s) against it`
         : 'issues touched in the window',
       context: [`Issues to triage: ${scope.map((n) => `#${n}`).join(', ')}.`],
     };

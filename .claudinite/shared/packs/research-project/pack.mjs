@@ -4,8 +4,13 @@
 // (session-continuity, reading-source-articles) are noted in RULES.md.
 export default {
   id: 'research-project',
+  ruleRoutingGuidance: {
+    belongs: 'methodology for iterating an algorithm over sample inputs against annotated ground truth — scoring, phases, session continuity',
+    excludes: 'shipping an end-user product against a spec — that is spec-driven-product; market research is product-wiki',
+  },
+  badge: 'badge.svg',
   marker: null,
   detect: null,
   prose: 'RULES.md',
-  rules: [],
+  worldRules: [],
 };

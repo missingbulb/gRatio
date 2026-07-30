@@ -16,10 +16,14 @@ import myelinBandScaleFree from './myelin-band-scale-free.mjs';
 // fingerprinted (detect/marker stay null) — a local pack is not seeded.
 export default {
   id: 'gratio',
+  ruleRoutingGuidance: {
+    belongs: 'g-ratio measurement invariants — what may not be keyed on, imported, or authored rather than generated',
+    excludes: 'the research-project class — inputs, ground truth, reviewable iterations — that is research-project',
+  },
   detect: null,
   marker: null,
   prose: 'RULES.md',
-  rules: [noSampleSpecialCasing, generatedGtMasks, optionalSkimageImport, validationTiersSeparate, myelinBandScaleFree],
+  worldRules: [noSampleSpecialCasing, optionalSkimageImport, validationTiersSeparate, myelinBandScaleFree],
+  workRules: [generatedGtMasks],
   skills: [],
-  run_daily: [],
 };

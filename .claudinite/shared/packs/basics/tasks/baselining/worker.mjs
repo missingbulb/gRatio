@@ -30,7 +30,9 @@
 //   6. deliver the converge as ONE commit on the per-cycle maintenance branch via
 //      NATIVE git (find the family's open PR by head-branch prefix and reuse it,
 //      else mint a dated branch and open the PR), arming auto-merge per the
-//      member's `maintenance.delivery`;
+//      member's `maintenance.delivery` and DISPATCHING the repo's PR CI on the
+//      branch — the GITHUB_TOKEN push emits no pull_request run of its own
+//      (#565), so the checks the arm waits on must be started explicitly;
 //   7. request the agent (write CLAUDINITE_REQUEST_AGENT) only when judgment is
 //      left — the scheduler files `ready-for-agent` iff this file appears (§3,
 //      conditional handoff). NO code→agent data channel: the file is a pure
@@ -150,6 +152,61 @@ export function shouldRequestAgent({ pendingCount, meaningfulChange, checksPass 
 // requests the agent stage (run.mjs files `ready-for-agent` iff it appears).
 export const AGENT_REQUEST_MARKER = 'agent-requested';
 
+// --- CI dispatch on the maintenance PR (#565) --------------------------------
+// The branch push and the PR open in deliver() both ride the Action's
+// GITHUB_TOKEN, and GitHub suppresses workflow runs for events that token
+// authors (its recursion guard) — so the maintenance PR gets NO pull_request
+// run, auto-merge arms against a green that never arrives, and the PR sits open
+// forever (#565; the canon-only variant was #432). The guard's one documented
+// exception is workflow_dispatch: a dispatch POSTed with GITHUB_TOKEN does start
+// a run, the run's check runs land on the branch-head sha, and that sha is what
+// the PR's merge gate reads. So deliver() starts the PR's checks itself:
+// dispatch every workflow that WOULD have run on pull_request and CAN be
+// dispatched.
+//
+// Reading the triggers is a best-effort TEXTUAL scan of a workflow's top-level
+// `on:` block (the worker is dependency-free — no YAML parser). It covers the
+// shapes workflows actually use: a block map of trigger keys (with or without
+// nested config), the inline scalar, and the inline list.
+export function workflowTriggers(yaml) {
+  const lines = String(yaml ?? '').split('\n');
+  const onAt = lines.findIndex((l) => /^(['"]?)on\1\s*:/.test(l));
+  if (onAt === -1) return [];
+  const inline = lines[onAt].replace(/^(['"]?)on\1\s*:/, '').replace(/#.*$/, '').trim();
+  if (inline) return inline.replace(/[[\]]/g, '').split(',').map((s) => s.trim()).filter(Boolean);
+  const triggers = [];
+  let childIndent = null;
+  for (let i = onAt + 1; i < lines.length; i += 1) {
+    const line = lines[i];
+    if (!line.trim() || line.trim().startsWith('#')) continue;
+    const indent = line.length - line.trimStart().length;
+    if (indent === 0) break;                        // next top-level key — on: is done
+    childIndent = childIndent ?? indent;            // first child fixes the trigger level
+    if (indent !== childIndent) continue;           // nested config under a trigger
+    const m = /^([A-Za-z_]+)\s*:/.exec(line.trim());
+    if (m) triggers.push(m[1]);
+  }
+  return triggers;
+}
+
+// The dispatch plan over the repo's workflow files ({name, content} each):
+// `dispatch` — runs on pull_request AND carries workflow_dispatch (start these);
+// `missing`  — runs on pull_request but CANNOT be dispatched (name these in the
+// log: adding `workflow_dispatch:` to that file's `on:` is the owner's one-line
+// fix, and silence here would read as "no CI expected" when CI was expected).
+// A workflow with no pull_request trigger is never touched — dispatchable-but-
+// unrelated workflows (a release orchestrator, say) must not fire nightly.
+export function ciDispatchPlan(files) {
+  const dispatch = [];
+  const missing = [];
+  for (const { name, content } of files ?? []) {
+    const triggers = workflowTriggers(content);
+    if (!triggers.includes('pull_request')) continue;
+    (triggers.includes('workflow_dispatch') ? dispatch : missing).push(name);
+  }
+  return { dispatch, missing };
+}
+
 // --- I/O shell (validated by the live pilot, not unit tests) ----------------
 
 const git = (args, opts = {}) =>
@@ -224,7 +281,49 @@ async function deliver(root, repo, base, token, delivery, seed) {
   if (delivery === 'auto-merge' && pr?.node_id) {
     await enableAutoMerge(token, pr.node_id).catch(() => {});
   }
+
+  // Start the PR's checks — the GITHUB_TOKEN push/open above emitted no
+  // pull_request event, so without this the PR has no runs and the arm above
+  // waits forever (#565, the ciDispatchPlan block). AFTER the push, so the
+  // dispatched runs execute the branch's own head; every delivering cycle, since
+  // a force-push emits no synchronize event either and each new head needs its
+  // own runs. Best-effort like the arm: a dispatch failure must not fail the
+  // converge that was already pushed.
+  await dispatchCiRuns(token, repo, branch)
+    .catch((e) => console.log(`baselining: CI dispatch on ${branch} failed: ${e.message}`));
   return branch;
+}
+
+// The I/O half of the CI dispatch (#565): read the workflow files as they exist
+// ON THE MAINTENANCE BRANCH (the converge may itself have changed them), plan
+// with ciDispatchPlan, POST a dispatch per selected workflow, and log every
+// outcome — a silent no-checks PR is exactly the failure mode this exists to
+// close. Needs the scheduler workflow's `actions: write` (a read-only token
+// 403s the POST silently — the store-release lesson).
+async function dispatchCiRuns(token, repo, branch) {
+  const ref = encodeURIComponent(branch);
+  const { json: dir } = await gh(token, `/repos/${repo}/contents/.github/workflows?ref=${ref}`);
+  const files = [];
+  for (const entry of Array.isArray(dir) ? dir : []) {
+    if (!/\.ya?ml$/.test(entry.name ?? '')) continue;
+    const { json } = await gh(token, `/repos/${repo}/contents/.github/workflows/${entry.name}?ref=${ref}`);
+    files.push({ name: entry.name, content: json?.content ? Buffer.from(json.content, 'base64').toString('utf8') : '' });
+  }
+  const { dispatch, missing } = ciDispatchPlan(files);
+  for (const name of missing) {
+    console.log(`baselining: ${name} runs on pull_request but has no workflow_dispatch trigger — `
+      + 'cannot start it on the maintenance PR; add `workflow_dispatch:` under its `on:` to let baselining run it');
+  }
+  if (!dispatch.length && !missing.length) {
+    console.log('baselining: no pull_request-triggered workflow — the maintenance PR has no checks to wait for');
+  }
+  for (const name of dispatch) {
+    const res = await gh(token, `/repos/${repo}/actions/workflows/${name}/dispatches`, {
+      method: 'POST', body: { ref: branch },
+    });
+    if (res.status === 204) console.log(`baselining: dispatched ${name} on ${branch} — the maintenance PR gets its checks`);
+    else console.log(`baselining: could not dispatch ${name} on ${branch} (${res.status})`);
+  }
 }
 
 // Ask the owner to add a repo Actions secret a task declares in `required_secrets`

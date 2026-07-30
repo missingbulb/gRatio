@@ -4,9 +4,9 @@ import { finding } from '../../engine/checks/helpers/findings.mjs';
 // each entry's `config` onto packConfig). Declared-but-unconfigured is fine and
 // fail-safe — capture and the growth tasks run, promotion participates, and the
 // conversation nightly's retention sweep deletes nothing until the project
-// states an explicit retention_days (no silent default; the adoption question
-// asks for it). `promote: false` opts this repo out of the central promote
-// stage while it keeps extracting and deduping locally.
+// states an explicit retention_days (no default — the value stays hidden/unset
+// unless a project deliberately sets it). `promote: false` opts this repo out
+// of the central promote stage while it keeps extracting and deduping locally.
 const rule = {
   id: 'growth-config',
   severity: 'blocking',

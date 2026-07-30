@@ -1,11 +1,18 @@
 #!/usr/bin/env node
-// The merge-to-main capture step (grow_with_claudinite pack): push this session's
-// conversation onto the repo's orphan `conversation-logs` branch as one JSONL
-// file named `<stamp>--issue-<n>--<session>.jsonl` (README.md owns the standard).
+// The capture step (grow_with_claudinite pack): push this session's conversation
+// onto the repo's orphan `conversation-logs` branch as one JSONL file named
+// `<stamp>--issue-<n>--<session>.jsonl` (README.md owns the standard). Two events
+// invoke it — merge-to-main, with the issue the merge closed, and the SessionEnd
+// hook (session-end.mjs), with `--issue 0`.
 //
-// Delta-aware: a session that merges more than once pushes a second, disjoint
-// file holding only the entries after its previous capture — each file maps 1:1
-// to a merge and its issue, so the nightly extract never re-reads a turn.
+// Delta-aware, keyed on the SESSION ID: every capture refetches the branch tip,
+// finds all prior files for this session (whatever event or issue produced them),
+// takes the max entry timestamp across them, and pushes only the entries strictly
+// after it. Zero delta ⇒ no file, no commit, no push. Double-writing is therefore
+// safe BY CONSTRUCTION — any two capture events for one session chain into
+// disjoint files — which is the property the SessionEnd hook relies on, so
+// pack.test.mjs pins it directly. One file maps 1:1 to a CAPTURE EVENT, not to a
+// merge, and the nightly extract never re-reads a turn.
 //
 // All branch writes go through git plumbing (hash-object/mktree/commit-tree/push)
 // against the fetched remote tip — the user's checkout and index are never
@@ -336,8 +343,14 @@ function parseArgs(argv) {
 
 async function main() {
   const args = parseArgs(process.argv.slice(2));
-  if (!/^[1-9]\d*$/.test(args.issue ?? '')) {
-    console.error('required: --issue <n> — the issue number the merged PR closes (from its "Closes #<n>")');
+  // `0` is a legal issue: it means "no associated issue" — the shape a capture
+  // takes when no merge produced it (the SessionEnd capture, session-end.mjs).
+  // The filename stays byte-identical in shape, which is the point: the retention
+  // prune, the conversationLogs signal and the extract's filename parse all already
+  // accept `0`, whereas any NEW filename shape would be invisible to the prune and
+  // become immortal on the branch.
+  if (!/^(0|[1-9]\d*)$/.test(args.issue ?? '')) {
+    console.error('required: --issue <n> — the issue number the merged PR closes (from its "Closes #<n>"), or 0 when no issue is associated');
     process.exit(2);
   }
   const root = git(process.cwd(), ['rev-parse', '--show-toplevel']).stdout.trim();
