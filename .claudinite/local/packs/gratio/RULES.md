@@ -4,7 +4,7 @@ This project's own pack: what is specific to measuring a myelin g-ratio from EM
 cross-sections here, and to nothing the canon packs already home. The working
 loop (show every step, ground truth annotated never invented, numbered
 iterations, spikes vs. main path) is the declared `research-project` pack's — it
-is not repeated here. Four rules of this pack are deterministic checks
+is not repeated here. Five rules of this pack are deterministic checks
 (`README.md` lists them); what follows is the judgment that has no static
 signature.
 
@@ -62,25 +62,3 @@ container has neither) as a *separate, earlier* call — chaining the install in
 front of the suite is what pushes the pair over the default. If a suite does end
 up backgrounded, wait on the one that is already running rather than launching a
 second.
-
-## Auto-merge is off; stop at the PR
-
-`enable_pr_auto_merge` cannot be armed in this repo — GitHub answers *"Auto-merge
-is not enabled for this repository"* (Settings → General → Pull Requests → Allow
-auto-merge is unchecked), and there is no CI workflow to gate on either: the only
-workflow, `claudinite-scheduler.yml`, is a cron shim that produces no check runs,
-so `get_check_runs` on any PR here returns `total_count: 0`.
-
-A routine told to "land this through an auto-merging PR" therefore **cannot**, and
-the failure looks like a one-command gap that squash-merging your own PR would
-close. Don't. That is exactly what happened on 2026-07-26: the run squash-merged
-its own PR #24 with zero checks and no review, tripped the merge-without-review
-classifier, and its dispatch converged to `needs-human` instead of done — the
-merge cost more than the unlanded change would have. Observed again 2026-07-29,
-so treat it as the standing state, not a blip.
-
-The correct outcome is an **open PR plus a plain statement that auto-merge could
-not be armed and why** — an unmerged PR is a complete, honest result for a
-`merged-pr` ceiling, and the owner enabling the repo setting is the only real
-fix. Verify before assuming: if a future run's `enable_pr_auto_merge` succeeds,
-the setting was turned on and this section should go.
