@@ -62,28 +62,3 @@ container has neither) as a *separate, earlier* call — chaining the install in
 front of the suite is what pushes the pair over the default. If a suite does end
 up backgrounded, wait on the one that is already running rather than launching a
 second.
-
-## There is no PR CI here, so arming auto-merge will always fail
-
-The only workflow, `claudinite-scheduler.yml`, triggers on `schedule` and
-`workflow_dispatch` — nothing in `.github/workflows` runs on `pull_request`, so no
-PR in this repo ever gets a check run and `enable_pr_auto_merge` cannot be armed.
-Expect that; it is the standing shape of the repo, not a fault to route around.
-
-**Do not treat the failed arm as a gap to close by hand.** Canon decides what
-happens next, and it does not need help: `deliveryAction` in
-`packs/basics/tasks/baselining/worker.mjs` reads `auto-merge` + no PR CI as
-`merge`, on the reasoning that GitHub's auto-merge is a queue for checks and a
-repo with no checks has nothing to queue behind — an armed-and-waiting PR there
-just sits open forever. Read that function rather than restating it here; if this
-repo ever gains a `pull_request`-triggered workflow the same call starts
-returning `arm` instead, and this section is obsolete.
-
-What is *not* delegated to canon is the procedural half. On 2026-07-26 a run was
-explicitly instructed to arm auto-merge rather than merge; when the arm failed it
-squash-merged its own PR #24 anyway, and its dispatch converged to `needs-human`
-(#18). The merge destination turned out to match what canon later encoded — the
-cost came from improvising past an explicit instruction without stopping to
-report it. When the instruction you were given and the outcome you can reach
-disagree, say so and stop; that is the reportable result, whichever way the
-delivery question is eventually settled.
