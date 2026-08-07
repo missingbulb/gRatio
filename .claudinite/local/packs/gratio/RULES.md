@@ -4,7 +4,7 @@ This project's own pack: what is specific to measuring a myelin g-ratio from EM
 cross-sections here, and to nothing the canon packs already home. The working
 loop (show every step, ground truth annotated never invented, numbered
 iterations, spikes vs. main path) is the declared `research-project` pack's — it
-is not repeated here. Four rules of this pack are deterministic checks
+is not repeated here. Five rules of this pack are deterministic checks
 (`README.md` lists them); what follows is the judgment that has no static
 signature.
 
@@ -63,24 +63,27 @@ front of the suite is what pushes the pair over the default. If a suite does end
 up backgrounded, wait on the one that is already running rather than launching a
 second.
 
-## Auto-merge is off; stop at the PR
+## There is no PR CI here, so arming auto-merge will always fail
 
-`enable_pr_auto_merge` cannot be armed in this repo — GitHub answers *"Auto-merge
-is not enabled for this repository"* (Settings → General → Pull Requests → Allow
-auto-merge is unchecked), and there is no CI workflow to gate on either: the only
-workflow, `claudinite-scheduler.yml`, is a cron shim that produces no check runs,
-so `get_check_runs` on any PR here returns `total_count: 0`.
+The only workflow, `claudinite-scheduler.yml`, triggers on `schedule` and
+`workflow_dispatch` — nothing in `.github/workflows` runs on `pull_request`, so no
+PR in this repo ever gets a check run and `enable_pr_auto_merge` cannot be armed.
+Expect that; it is the standing shape of the repo, not a fault to route around.
 
-A routine told to "land this through an auto-merging PR" therefore **cannot**, and
-the failure looks like a one-command gap that squash-merging your own PR would
-close. Don't. That is exactly what happened on 2026-07-26: the run squash-merged
-its own PR #24 with zero checks and no review, tripped the merge-without-review
-classifier, and its dispatch converged to `needs-human` instead of done — the
-merge cost more than the unlanded change would have. Observed again 2026-07-29,
-so treat it as the standing state, not a blip.
+**Do not treat the failed arm as a gap to close by hand.** Canon decides what
+happens next, and it does not need help: `deliveryAction` in
+`packs/basics/tasks/baselining/worker.mjs` reads `auto-merge` + no PR CI as
+`merge`, on the reasoning that GitHub's auto-merge is a queue for checks and a
+repo with no checks has nothing to queue behind — an armed-and-waiting PR there
+just sits open forever. Read that function rather than restating it here; if this
+repo ever gains a `pull_request`-triggered workflow the same call starts
+returning `arm` instead, and this section is obsolete.
 
-The correct outcome is an **open PR plus a plain statement that auto-merge could
-not be armed and why** — an unmerged PR is a complete, honest result for a
-`merged-pr` ceiling, and the owner enabling the repo setting is the only real
-fix. Verify before assuming: if a future run's `enable_pr_auto_merge` succeeds,
-the setting was turned on and this section should go.
+What is *not* delegated to canon is the procedural half. On 2026-07-26 a run was
+explicitly instructed to arm auto-merge rather than merge; when the arm failed it
+squash-merged its own PR #24 anyway, and its dispatch converged to `needs-human`
+(#18). The merge destination turned out to match what canon later encoded — the
+cost came from improvising past an explicit instruction without stopping to
+report it. When the instruction you were given and the outcome you can reach
+disagree, say so and stop; that is the reportable result, whichever way the
+delivery question is eventually settled.
